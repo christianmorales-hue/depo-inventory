@@ -51,6 +51,30 @@ def search(q: str = ""):
     return JSONResponse(_decorate(rows, rate))
 
 
+@app.get("/api/items/{item_id}")
+def get_item(item_id: int, request: Request):
+    """Fetch one item by ID with current price in both currencies. Used by
+    the cotización and nota carts to refresh a product's price at the moment
+    it gets added, so a stale search snapshot never leaks in."""
+    require(request)
+    rate = current_rate()["rate"]
+    rows = run("""
+        SELECT i.item_id, i.sku, i.part_code, i.side, i.description, i.price_usd,
+               i.is_active, i.photo_path, i.product_type, i.make, i.model,
+               i.year_text, i.nickname,
+               coalesce(json_agg(json_build_object('branch_id', b.branch_id, 'qty', s.qty))
+                        FILTER (WHERE b.branch_id IS NOT NULL), '[]') AS stock
+        FROM item i
+        LEFT JOIN stock_on_hand s ON s.item_id = i.item_id AND s.condition = 'good'
+        LEFT JOIN branch b ON b.branch_id = s.branch_id AND b.is_active
+        WHERE i.item_id = %s
+        GROUP BY i.item_id
+    """, (item_id,))
+    if not rows:
+        raise HTTPException(404, "Producto no encontrado.")
+    return JSONResponse(_decorate(rows, rate)[0])
+
+
 class ItemIn(BaseModel):
     description: str
     part_code: str | None = None

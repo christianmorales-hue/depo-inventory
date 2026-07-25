@@ -788,12 +788,12 @@ async function csearch(){
       <button class="primary" data-add-id="${r.item_id}">Agregar</button>
     </div></div>`).join('');
   box.querySelectorAll('[data-add-id]').forEach(b => b.onclick = async () => {
-    // Always refetch by SKU so the cart price is the real current one.
+    // Fetch the item straight by ID - fuzzy search can't be trusted to find
+    // an exact SKU, so we ask the server for the specific record.
     const id = parseInt(b.dataset.addId, 10);
     let fresh;
     try {
-      const one = await api('/api/search?q=DEPO-' + String(id).padStart(5,'0'));
-      fresh = one.find(x => x.item_id === id) || one[0];
+      fresh = await api('/api/items/' + id);
     } catch (e) { fresh = null; }
     if (!fresh) {
       alert('No se pudo cargar el producto. Intente de nuevo.');
@@ -978,15 +978,11 @@ async function nsearch(){
       <button class="primary" data-add-id="${r.item_id}">Agregar</button>
     </div></div>`).join('');
   box.querySelectorAll('[data-add-id]').forEach(b => b.onclick = async () => {
-    // Refetch the item straight from the server. This guarantees the price
-    // in the cart is whatever gerencia last set - never a stale snapshot
-    // from an older search response.
+    // Fetch by ID (fuzzy search can't reliably resolve an exact SKU).
     const id = parseInt(b.dataset.addId, 10);
     let fresh;
     try {
-      // Search by SKU to get one authoritative row back.
-      const one = await api('/api/search?q=DEPO-' + String(id).padStart(5,'0'));
-      fresh = one.find(x => x.item_id === id) || one[0];
+      fresh = await api('/api/items/' + id);
     } catch (e) { fresh = null; }
     if (!fresh) {
       alert('No se pudo cargar el producto. Intente de nuevo.');
