@@ -122,6 +122,10 @@ PAGE = r"""
  .login button.primary{padding:12px;font-size:16px;background:var(--ink);
         color:#fff;border-color:var(--ink)}
  .fx b{color:var(--ink)}
+ .price-cell{display:flex;flex-direction:column;justify-content:center;
+        align-items:flex-end;text-align:right;padding-right:6px;line-height:1.2}
+ .price-cell b{font-size:14px}
+ .price-cell small{color:var(--muted);font-size:11px}
  .price-usd{color:var(--muted);font-size:12px}
  .please-login{text-align:center;padding:80px 20px;color:var(--muted);
         font-size:17px}
@@ -354,7 +358,7 @@ async function loadSide(){
 }
 
 function cols(){
-  return `44px 44px minmax(0,1fr) ${branches.map(() => '84px').join(' ')}`;
+  return `44px 44px minmax(0,1fr) 92px ${branches.map(() => '84px').join(' ')}`;
 }
 
 // ------------------------------------------------------------------- shell
@@ -462,7 +466,7 @@ function draw(){
   const heads = $('#heads'), out = $('#results');
   heads.hidden = rows.length === 0;
   heads.style.gridTemplateColumns = cols();
-  heads.innerHTML = `<b>Foto</b><b>Lado</b><b>Producto</b>` +
+  heads.innerHTML = `<b>Foto</b><b>Lado</b><b>Producto</b><b>Precio</b>` +
     branches.map(b => `<b>${esc(b.name)}</b>`).join('');
 
   if (!rows.length) {
@@ -485,9 +489,13 @@ function draw(){
        <div><div class="desc">${esc(r.description)}` +
          (lonely ? '<span class="flag">falta el par</span>' : '') + `</div>
          <div class="code">${esc(r.part_code || 'sin código')}` +
-         (r.price_bob != null ? ` · Bs ${r.price_bob}` : '') +
-         (r.price_usd != null ? ` · <span class="price-usd">$${r.price_usd}</span>` : '') +
          (r.is_active ? '' : ' · inactivo') + `</div></div>` +
+      `<div class="price-cell">` +
+        (r.price_bob != null
+          ? `<b>Bs ${r.price_bob}</b>` +
+            (r.price_usd != null ? `<small>$ ${r.price_usd}</small>` : '')
+          : `<span class="sub">sin precio</span>`) +
+      `</div>` +
       branches.map(b => {
         const q = qtyOf(r, b.branch_id);
         const held = holds.filter(h => h.description === r.description &&
