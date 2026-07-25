@@ -495,10 +495,12 @@ function draw(){
          <div class="code">${esc(r.part_code || 'sin código')}` +
          (r.is_active ? '' : ' · inactivo') + `</div></div>` +
       `<div class="price-cell">` +
-        (r.price_usd != null
-          ? `<b>USD ${r.price_usd}</b>` +
-            (r.price_bob != null ? `<small>Bs ${r.price_bob}</small>` : '')
-          : `<span class="sub">sin precio</span>`) +
+        (r.price_bob != null
+          ? `<b>Bs ${r.price_bob}</b>` +
+            (r.price_usd != null ? `<small>USD ${r.price_usd}</small>` : '')
+          : r.price_usd != null
+            ? `<b>USD ${r.price_usd}</b>`
+            : `<span class="sub">sin precio</span>`) +
       `</div>` +
       branches.map(b => {
         const q = qtyOf(r, b.branch_id);
