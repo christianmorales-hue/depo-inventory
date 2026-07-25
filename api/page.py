@@ -65,25 +65,28 @@ PAGE = r"""
  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
        margin-bottom:8px;overflow:hidden}
  .row{padding:11px 14px;width:100%;text-align:left;border:none;border-radius:0;
-      background:none}
- .row:hover{background:#F6F8F9}
+      background:none;color:var(--ink)}
+ .row:hover{background:color-mix(in srgb, var(--focus) 10%, var(--card))}
  .thumb{width:44px;height:44px;border-radius:7px;object-fit:cover;
-        background:#F1F4F5;display:block}
+        background:color-mix(in srgb, var(--line) 40%, var(--card));display:block}
  .thumb.ph{display:flex;align-items:center;justify-content:center;
            color:var(--none);font-size:11px}
  .side{font:700 21px/1 ui-monospace,Menlo,monospace;text-align:center;padding:9px 0;
-       border-radius:7px;background:#FBF0E2;color:var(--amber)}
- .side.no{background:#F1F4F5;color:var(--none);font-size:15px}
+       border-radius:7px;background:color-mix(in srgb, var(--amber) 18%, var(--card));
+       color:var(--amber)}
+ .side.no{background:color-mix(in srgb, var(--line) 40%, var(--card));
+          color:var(--none);font-size:15px}
  .desc{font-weight:500}
  .code{font:13px ui-monospace,Menlo,monospace;color:var(--muted);margin-top:3px}
  .flag{color:var(--amber);font-size:12px;font-family:system-ui;
-       border:1px solid #E8D3B4;border-radius:20px;padding:1px 7px;margin-left:6px}
+       border:1px solid var(--amber);border-radius:20px;padding:1px 7px;margin-left:6px}
  .qty{text-align:center;font:600 20px/1 ui-monospace,Menlo,monospace;color:var(--have)}
  .qty.zero{color:var(--none);font-weight:400}
  .qty small{display:block;font-size:11px;color:var(--amber);font-weight:400}
  .off{opacity:.5}
 
- .panel{border-top:1px solid var(--line);padding:14px;background:#F8FAFB}
+ .panel{border-top:1px solid var(--line);padding:14px;
+        background:color-mix(in srgb, var(--line) 22%, var(--card))}
  .panel h4{margin:0 0 9px;font-size:11px;letter-spacing:.1em;
            text-transform:uppercase;color:var(--muted)}
  .panel h4:not(:first-child){margin-top:18px}
