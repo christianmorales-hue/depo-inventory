@@ -10,6 +10,9 @@ PAGE = r"""
 <style>
  :root{--bg:#EDF0F2;--card:#FFF;--ink:#14181B;--muted:#6B757C;--line:#D3DADE;
        --have:#0F6B3F;--none:#A7B0B6;--amber:#B45309;--focus:#1C5FA8;--warn:#A8322A;}
+ :root[data-theme="dark"]{--bg:#14181B;--card:#1E2429;--ink:#E8ECEF;
+       --muted:#95A0A8;--line:#333C43;--have:#3F9D6B;--none:#5A656D;
+       --amber:#D98B2B;--focus:#5B9BD5;--warn:#E06B60;}
  *{box-sizing:border-box}
  body{margin:0;background:var(--bg);color:var(--ink);
       font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -124,6 +127,9 @@ PAGE = r"""
  .fx b{color:var(--ink)}
  .price-cell{display:flex;flex-direction:column;justify-content:center;
         align-items:flex-end;text-align:right;padding-right:6px;line-height:1.2}
+ .dupe-warn{background:color-mix(in srgb, var(--amber) 12%, var(--card));
+        border:1px solid var(--amber);border-radius:8px;padding:10px 12px;
+        margin:8px 0;font-size:13px;color:var(--ink)}
  .price-cell b{font-size:14px}
  .price-cell small{color:var(--muted);font-size:11px}
  .price-usd{color:var(--muted);font-size:12px}
@@ -139,6 +145,7 @@ PAGE = r"""
          onerror="this.replaceWith(Object.assign(document.createElement('h1'),{textContent:'DEPO'}))">
     <span class="sub">Existencias por sucursal</span>
     <span class="spacer"></span>
+    <button class="link" id="theme-toggle" title="Cambiar tema">◐</button>
     <span id="session"></span>
   </header>
 
@@ -247,6 +254,70 @@ PAGE = r"""
     <div id="nlist" class="list"></div>
   </section>
 
+  <section id="v-devolucion" hidden>
+    <h3>Nueva devolución</h3>
+    <p class="hint">Devuelve productos al inventario. "Bueno" vuelve al stock
+      vendible; "defectuoso" se registra aparte.</p>
+    <div class="bar">
+      <input id="dq" placeholder="Buscar producto para devolver…"
+             style="flex:1;min-width:220px">
+    </div>
+    <div id="dsug" class="list" style="margin-top:8px"></div>
+    <h3 style="margin-top:22px">Productos a devolver</h3>
+    <div id="dcart" class="list"></div>
+    <h3 style="margin-top:22px">Datos</h3>
+    <div class="bar">
+      <input id="dcust" placeholder="Cliente (opcional)" style="flex:2;min-width:180px">
+      <input id="drefund" type="number" step="0.01" placeholder="Reembolso Bs" style="width:130px">
+    </div>
+    <div class="bar" style="margin-top:8px">
+      <input id="dreason" placeholder="Motivo de la devolución" style="flex:1;min-width:220px">
+    </div>
+    <div class="bar" style="margin-top:12px">
+      <button class="primary" id="dgo">Registrar devolución</button>
+      <button id="dclr">Vaciar</button>
+    </div>
+    <div class="msg" id="dmsg"></div>
+    <h3 style="margin-top:26px">Devoluciones anteriores</h3>
+    <div id="dlist" class="list"></div>
+  </section>
+
+  <section id="v-recepcion" hidden>
+    <h3>Recepción de mercadería</h3>
+    <p class="hint">Ingresa productos al inventario y registra su costo.</p>
+    <div class="bar">
+      <input id="rsup" placeholder="Proveedor" style="width:160px">
+      <input id="rinv" placeholder="Nº factura proveedor" style="width:170px">
+      <select id="rbranch"></select>
+    </div>
+    <div class="bar" style="margin-top:12px">
+      <input id="rq" placeholder="Buscar producto para ingresar…"
+             style="flex:1;min-width:220px">
+    </div>
+    <div id="rsug" class="list" style="margin-top:8px"></div>
+    <h3 style="margin-top:22px">Productos a ingresar</h3>
+    <div id="rcart" class="list"></div>
+    <div id="rtotal" class="sub" style="text-align:right;margin-top:8px"></div>
+    <div class="bar" style="margin-top:12px">
+      <button class="primary" id="rgo">Registrar recepción</button>
+      <button id="rclr">Vaciar</button>
+    </div>
+    <div class="msg" id="rmsg2"></div>
+    <h3 style="margin-top:26px">Recepciones anteriores</h3>
+    <div id="rlist" class="list"></div>
+  </section>
+
+  <section id="v-caja" hidden>
+    <h3>Caja diaria</h3>
+    <div class="bar">
+      <select id="cbranch"></select>
+      <span class="sub" id="cfecha"></span>
+    </div>
+    <div id="cajabox" class="card" style="margin-top:14px;padding:18px"></div>
+    <h3 style="margin-top:26px">Historial de caja</h3>
+    <div id="cajahist" class="list"></div>
+  </section>
+
   <section id="v-reportes" hidden>
     <h3>Ventas</h3>
     <div class="bar">
@@ -297,7 +368,8 @@ let pairs = new Set(), transit = [], holds = [], vehicles = [], view = 'buscar';
 const VIEWS = [['buscar','Buscar'],['vehiculo','Por vehículo'],
                ['traspasos','Traspasos'],['reservas','Reservas'],
                ['cotizacion','Cotización'],['nota','Nota de venta'],
-               ['reportes','Reportes']];
+               ['devolucion','Devoluciones'],['recepcion','Recepción'],
+               ['caja','Caja'],['reportes','Reportes']];
 
 const REASONS = [
   ['purchase',      1, 'Ingreso (compra)'],
@@ -321,10 +393,24 @@ async function api(path, opts) {
 let fx = {rate:null, source:'oficial'};
 
 (async function start(){
+  initTheme();
   try { user = await api('/api/me'); } catch(e) { user = {}; }
   try { fx = await api('/api/fx'); } catch(e){}
   await boot();
 })();
+
+function initTheme(){
+  const m = document.cookie.match(/(?:^|; )theme=([^;]+)/);
+  const theme = m ? m[1] : 'light';
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.onclick = () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    document.cookie = 'theme=' + next + ';path=/;max-age=31536000';
+  };
+}
 
 function showApp(loggedIn){
   const app = document.getElementById('app');
@@ -382,6 +468,9 @@ function go(v){
   if (v === 'reservas')  drawHolds();
   if (v === 'cotizacion') { drawCart(); loadQuotes(); }
   if (v === 'nota')      { drawNCart(); loadSales(); }
+  if (v === 'devolucion') { drawDCart(); loadDevoluciones(); }
+  if (v === 'recepcion') { fillBranchSelect('#rbranch'); drawRCart(); loadRecepciones(); }
+  if (v === 'caja')      { fillBranchSelect('#cbranch'); loadCaja(); }
   if (v === 'reportes')  drawArchive();
 }
 
@@ -1131,6 +1220,269 @@ $('#ngo2').onclick = async () => {
   } catch (e) { m.className='msg bad'; m.textContent = e.message; }
 };
 
+// ------------------------------------------------- shared branch selector
+function fillBranchSelect(sel){
+  const el = $(sel);
+  if (!el) return;
+  el.innerHTML = branches.map(b =>
+    `<option value="${b.branch_id}">${esc(b.name)}</option>`).join('');
+}
+
+// ------------------------------------------------------------ devoluciones
+let dcart = [];
+
+async function dsearch(){
+  const term = $('#dq').value.trim();
+  const box = $('#dsug');
+  if (term.length < 2) { box.innerHTML = ''; return; }
+  const results = await api('/api/search?q=' + encodeURIComponent(term));
+  box.innerHTML = results.slice(0, 8).map(r => `
+    <div class="card"><div class="bar">
+      <div class="side ${r.side?'':'no'}" style="width:44px">${r.side||'—'}</div>
+      <div style="flex:1;min-width:180px">
+        <div class="desc">${esc(r.description)}</div>
+        <div class="code">${esc(r.part_code||'sin código')}</div></div>
+      <button class="primary" data-add-id="${r.item_id}">Agregar</button>
+    </div></div>`).join('');
+  box.querySelectorAll('[data-add-id]').forEach(b => b.onclick = async () => {
+    let fresh;
+    try { fresh = await api('/api/items/' + parseInt(b.dataset.addId,10)); }
+    catch(e) { fresh = null; }
+    if (!fresh) { alert('No se pudo cargar el producto.'); return; }
+    const first = branches[0] || {};
+    dcart.push({item_id: fresh.item_id, description: fresh.description,
+      side: fresh.side, part_code: fresh.part_code,
+      price_bob: fresh.price_bob || 0, qty: 1,
+      branch_id: first.branch_id, condition: 'good'});
+    $('#dq').value = ''; box.innerHTML = ''; drawDCart();
+  });
+}
+
+function drawDCart(){
+  const box = $('#dcart');
+  if (!dcart.length) { box.innerHTML = '<p class="empty">Sin productos.</p>'; return; }
+  box.innerHTML = dcart.map((c,i) => `
+    <div class="card"><div class="bar">
+      <div class="side ${c.side?'':'no'}" style="width:44px">${c.side||'—'}</div>
+      <div style="flex:1;min-width:160px">
+        <div class="desc">${esc(c.description)}</div>
+        <div class="code">${esc(c.part_code||'')}</div></div>
+      <select data-b="${i}">${branches.map(b =>
+        `<option value="${b.branch_id}"${b.branch_id===c.branch_id?' selected':''}>${esc(b.name)}</option>`).join('')}</select>
+      <select data-cond="${i}">
+        <option value="good"${c.condition==='good'?' selected':''}>Bueno</option>
+        <option value="defect"${c.condition==='defect'?' selected':''}>Defectuoso</option>
+      </select>
+      <input type="number" min="1" value="${c.qty}" data-q="${i}" style="width:64px">
+      <button class="danger" data-rm="${i}">Quitar</button>
+    </div></div>`).join('');
+  box.querySelectorAll('[data-q]').forEach(inp => inp.oninput = () =>
+    { dcart[+inp.dataset.q].qty = Math.max(1, parseInt(inp.value,10)||1); });
+  box.querySelectorAll('[data-b]').forEach(s => s.onchange = () =>
+    { dcart[+s.dataset.b].branch_id = +s.value; });
+  box.querySelectorAll('[data-cond]').forEach(s => s.onchange = () =>
+    { dcart[+s.dataset.cond].condition = s.value; });
+  box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () =>
+    { dcart.splice(+b.dataset.rm,1); drawDCart(); });
+}
+
+async function loadDevoluciones(){
+  const box = $('#dlist');
+  const list = await api('/api/devoluciones');
+  box.innerHTML = list.length ? list.slice(0,15).map(d => `
+    <div class="card"><div class="desc">Devolución Nº ${d.numero}${
+      d.customer?' · '+esc(d.customer):''}</div>
+      <div class="code">${d.fecha} · ${d.lineas} productos${
+        d.refund_bob?' · reembolso Bs '+d.refund_bob:''}${
+        d.reason?' · '+esc(d.reason):''}</div>
+    </div>`).join('') : '<p class="empty">Aún no hay devoluciones.</p>';
+}
+
+$('#dq').addEventListener('input', () => {
+  clearTimeout(window.dt); window.dt = setTimeout(dsearch, 220);
+});
+$('#dclr').onclick = () => { dcart = []; drawDCart(); };
+$('#dgo').onclick = async () => {
+  const m = $('#dmsg');
+  if (!dcart.length) { m.className='msg bad'; m.textContent='Agregue productos.'; return; }
+  try {
+    const r = await api('/api/devoluciones', {method:'POST', body: JSON.stringify({
+      customer: $('#dcust').value || null,
+      reason: $('#dreason').value || null,
+      refund_bob: parseFloat($('#drefund').value) || null,
+      lines: dcart.map(c => ({item_id:c.item_id, branch_id:c.branch_id,
+        qty:c.qty, condition:c.condition, price_bob:c.price_bob}))})});
+    m.className='msg good'; m.textContent = `Devolución Nº ${r.numero} registrada.`;
+    dcart = []; drawDCart();
+    $('#dcust').value = $('#dreason').value = $('#drefund').value = '';
+    loadDevoluciones();
+    if (view === 'buscar') refresh();
+  } catch (e) { m.className='msg bad'; m.textContent = e.message; }
+};
+
+// -------------------------------------------------------------- recepción
+let rcart = [];
+
+async function rsearch(){
+  const term = $('#rq').value.trim();
+  const box = $('#rsug');
+  if (term.length < 2) { box.innerHTML = ''; return; }
+  const results = await api('/api/search?q=' + encodeURIComponent(term));
+  box.innerHTML = results.slice(0, 8).map(r => `
+    <div class="card"><div class="bar">
+      <div class="side ${r.side?'':'no'}" style="width:44px">${r.side||'—'}</div>
+      <div style="flex:1;min-width:180px">
+        <div class="desc">${esc(r.description)}</div>
+        <div class="code">${esc(r.part_code||'sin código')}${
+          r.price_usd!=null?' · costo ant. USD '+(r.price_usd):''}</div></div>
+      <button class="primary" data-add-id="${r.item_id}">Agregar</button>
+    </div></div>`).join('');
+  box.querySelectorAll('[data-add-id]').forEach(b => b.onclick = async () => {
+    let fresh;
+    try { fresh = await api('/api/items/' + parseInt(b.dataset.addId,10)); }
+    catch(e){ fresh = null; }
+    if (!fresh) { alert('No se pudo cargar el producto.'); return; }
+    rcart.push({item_id: fresh.item_id, description: fresh.description,
+      side: fresh.side, part_code: fresh.part_code, qty: 1,
+      cost_usd: fresh.price_usd || null});
+    $('#rq').value = ''; box.innerHTML = ''; drawRCart();
+  });
+}
+
+function drawRCart(){
+  const box = $('#rcart');
+  if (!rcart.length) { box.innerHTML = '<p class="empty">Sin productos.</p>';
+    $('#rtotal').textContent = ''; return; }
+  box.innerHTML = rcart.map((c,i) => `
+    <div class="card"><div class="bar">
+      <div class="side ${c.side?'':'no'}" style="width:44px">${c.side||'—'}</div>
+      <div style="flex:1;min-width:160px">
+        <div class="desc">${esc(c.description)}</div>
+        <div class="code">${esc(c.part_code||'')}</div></div>
+      <label class="sub">Costo USD <input type="number" step="0.01" value="${
+        c.cost_usd ?? ''}" data-cost="${i}" style="width:90px"></label>
+      <input type="number" min="1" value="${c.qty}" data-q="${i}" style="width:64px">
+      <button class="danger" data-rm="${i}">Quitar</button>
+    </div></div>`).join('');
+  box.querySelectorAll('[data-q]').forEach(inp => inp.oninput = () =>
+    { rcart[+inp.dataset.q].qty = Math.max(1, parseInt(inp.value,10)||1); rtotal(); });
+  box.querySelectorAll('[data-cost]').forEach(inp => inp.oninput = () =>
+    { rcart[+inp.dataset.cost].cost_usd = parseFloat(inp.value)||null; rtotal(); });
+  box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () =>
+    { rcart.splice(+b.dataset.rm,1); drawRCart(); });
+  rtotal();
+}
+function rtotal(){
+  const t = rcart.reduce((a,c) => a + (c.cost_usd||0)*c.qty, 0);
+  $('#rtotal').innerHTML = `<b>Total costo: USD ${t.toFixed(2)}</b>`;
+}
+
+async function loadRecepciones(){
+  const box = $('#rlist');
+  const list = await api('/api/recepciones');
+  box.innerHTML = list.length ? list.slice(0,15).map(r => `
+    <div class="card"><div class="desc">Recepción Nº ${r.numero}${
+      r.supplier?' · '+esc(r.supplier):''}</div>
+      <div class="code">${r.fecha} · ${r.sucursal||''} · ${r.lineas} productos${
+        r.total_usd?' · USD '+r.total_usd:''}${
+        r.invoice_ref?' · fact. '+esc(r.invoice_ref):''}</div>
+    </div>`).join('') : '<p class="empty">Aún no hay recepciones.</p>';
+}
+
+$('#rq').addEventListener('input', () => {
+  clearTimeout(window.rt2); window.rt2 = setTimeout(rsearch, 220);
+});
+$('#rclr').onclick = () => { rcart = []; drawRCart(); };
+$('#rgo').onclick = async () => {
+  const m = $('#rmsg2');
+  if (!rcart.length) { m.className='msg bad'; m.textContent='Agregue productos.'; return; }
+  try {
+    const r = await api('/api/recepciones', {method:'POST', body: JSON.stringify({
+      supplier: $('#rsup').value || null,
+      invoice_ref: $('#rinv').value || null,
+      branch_id: parseInt($('#rbranch').value,10),
+      lines: rcart.map(c => ({item_id:c.item_id, qty:c.qty, cost_usd:c.cost_usd}))})});
+    m.className='msg good'; m.textContent = `Recepción Nº ${r.numero} registrada. Stock actualizado.`;
+    rcart = []; drawRCart();
+    $('#rsup').value = $('#rinv').value = '';
+    loadRecepciones();
+    if (view === 'buscar') refresh();
+  } catch (e) { m.className='msg bad'; m.textContent = e.message; }
+};
+
+// ------------------------------------------------------------------- caja
+function bsf(n){ return n == null ? '—' : 'Bs ' + Number(n).toFixed(2); }
+
+async function loadCaja(){
+  const branch_id = parseInt($('#cbranch').value, 10);
+  if (!branch_id) return;
+  const today = new Date().toISOString().slice(0,10);
+  $('#cfecha').textContent = 'Hoy: ' + today;
+  const c = await api('/api/caja?branch_id=' + branch_id);
+  const box = $('#cajabox');
+
+  if (!c.abierta) {
+    box.innerHTML = `
+      <p>La caja de hoy aún no está abierta.</p>
+      <div class="bar">
+        <label class="sub">Efectivo inicial Bs
+          <input id="copen" type="number" step="0.01" value="0" style="width:110px"></label>
+        <button class="primary" id="cajaopen">Abrir caja</button>
+      </div>`;
+    $('#cajaopen').onclick = async () => {
+      await api('/api/caja/open', {method:'POST', body: JSON.stringify({
+        branch_id, opening_bob: parseFloat($('#copen').value)||0})});
+      loadCaja();
+    };
+  } else {
+    const closed = c.closed_at != null;
+    box.innerHTML = `
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px;max-width:420px">
+        <span class="sub">Efectivo inicial</span><b>${bsf(c.opening_bob)}</b>
+        <span class="sub">Ventas de hoy</span><b>${bsf(c.ventas_bob)}</b>
+        <span class="sub">Esperado en caja</span><b>${bsf(c.esperado_bob)}</b>
+        ${closed ? `
+          <span class="sub">Contado</span><b>${bsf(c.counted_bob)}</b>
+          <span class="sub">Diferencia</span>
+          <b style="color:${c.diferencia_bob==0?'var(--have)':'var(--warn)'}">${
+            bsf(c.diferencia_bob)}</b>
+        ` : ''}
+      </div>
+      ${closed ? '<p class="sub" style="margin-top:12px">Caja cerrada.</p>' : `
+        <div class="bar" style="margin-top:14px">
+          <label class="sub">Efectivo contado Bs
+            <input id="ccount" type="number" step="0.01" style="width:120px"></label>
+          <input id="cnote" placeholder="Nota (opcional)" style="width:180px">
+          <button class="primary" id="cajaclose">Cerrar caja</button>
+        </div>`}`;
+    if (!closed) $('#cajaclose').onclick = async () => {
+      const counted = parseFloat($('#ccount').value);
+      if (isNaN(counted)) { alert('Ingrese el efectivo contado.'); return; }
+      await api('/api/caja/close', {method:'POST', body: JSON.stringify({
+        branch_id, counted_bob: counted, note: $('#cnote').value||null})});
+      loadCaja();
+    };
+  }
+  loadCajaHistory(branch_id);
+}
+
+async function loadCajaHistory(branch_id){
+  const list = await api('/api/caja/history?branch_id=' + branch_id);
+  const box = $('#cajahist');
+  box.innerHTML = list.length ? list.map(c => `
+    <div class="card"><div class="bar">
+      <div style="flex:1"><div class="desc">${c.fecha}</div>
+        <div class="code">ventas ${bsf(c.ventas_bob)} · esperado ${
+          bsf(c.esperado_bob)}${c.counted_bob!=null?' · contado '+bsf(c.counted_bob):''}</div>
+      </div>
+      ${c.diferencia_bob!=null ? `<b style="color:${
+        c.diferencia_bob==0?'var(--have)':'var(--warn)'}">${bsf(c.diferencia_bob)}</b>`
+        : '<span class="sub">abierta</span>'}
+    </div></div>`).join('') : '<p class="empty">Sin historial.</p>';
+}
+
+$('#cbranch').addEventListener('change', loadCaja);
+
 // ------------------------------------------------------------------ reports
 function dl(url){
   const a = document.createElement('a');
@@ -1204,7 +1556,9 @@ function drawAdmin(){
       <input id="nyr" placeholder="Año" style="width:90px">
       <input id="nnk" placeholder="Apodo (CHANCHO)" style="width:140px">
       <button class="primary" id="ngo">Crear</button>
-    </div><div class="msg" id="nmsg"></div>
+    </div>
+    <div id="ndupe" class="dupe-warn" hidden></div>
+    <div class="msg" id="nmsg"></div>
   </details>
   <details><summary>Sucursales</summary>
     <div id="blist"></div>
@@ -1214,6 +1568,24 @@ function drawAdmin(){
       <button class="primary" id="bgo">Agregar</button>
     </div><div class="msg" id="bmsg"></div>
   </details>`;
+
+  $('#nd').addEventListener('input', () => {
+    clearTimeout(window.dupt);
+    window.dupt = setTimeout(checkDupes, 350);
+  });
+  async function checkDupes(){
+    const q = $('#nd').value.trim();
+    const warn = $('#ndupe');
+    if (q.length < 3) { warn.hidden = true; return; }
+    let hits = [];
+    try { hits = await api('/api/items/similar?q=' + encodeURIComponent(q)); }
+    catch(e) { warn.hidden = true; return; }
+    if (!hits.length) { warn.hidden = true; return; }
+    warn.hidden = false;
+    warn.innerHTML = '<b>¿Ya existe?</b> Productos parecidos:<br>' +
+      hits.map(h => `· ${esc(h.description)} <span class="code">${
+        esc(h.part_code||'sin código')}</span>`).join('<br>');
+  }
 
   $('#ngo').onclick = async () => {
     const m = $('#nmsg');
@@ -1226,6 +1598,7 @@ function drawAdmin(){
         model: $('#nmd').value || null, year_text: $('#nyr').value || null,
         nickname: $('#nnk').value || null})});
       m.className = 'msg good'; m.textContent = 'Producto creado.';
+      $('#ndupe').hidden = true;
       $('#nd').value = $('#nc').value = $('#np').value = $('#ntp').value =
         $('#nmk').value = $('#nmd').value = $('#nyr').value = $('#nnk').value = '';
       search();
