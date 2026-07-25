@@ -105,25 +105,64 @@ class ItemPatch(BaseModel):
 
 
 @app.patch("/api/items/{item_id}")
-def update_item(item_id: int, body: ItemPatch, request: Request):
+async def update_item(item_id: int, request: Request):
+    """Update an item. Works from the raw JSON body so no field gets silently
+    filtered by Pydantic before reaching the SQL."""
     user = require(request, "admin")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Cuerpo JSON inválido.")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Se esperaba un objeto.")
+
+    print(f"PATCH item {item_id} body: {body}")  # visible in Railway logs
+
+    allowed = {"description", "part_code", "price_usd", "is_active",
+               "product_type", "make", "model", "year_text", "nickname"}
     sets, vals = [], []
-    for field in ("description", "part_code", "price_usd", "is_active",
-                  "product_type", "make", "model", "year_text", "nickname"):
-        value = getattr(body, field)
-        if value is not None:
-            sets.append(f"{field} = %s")
-            vals.append(value if field in ("price_usd", "is_active")
-                        else _clean(value))
+    for field in allowed:
+        if field not in body:
+            continue
+        value = body[field]
+        if field == "price_usd":
+            if value is None or value == "":
+                continue
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "El precio debe ser un número.")
+        elif field == "is_active":
+            value = bool(value)
+        else:
+            if value is None:
+                continue
+            value = _clean(str(value))
+            if value is None:
+                continue
+        sets.append(f"{field} = %s")
+        vals.append(value)
+
     if not sets:
-        raise HTTPException(400, "Nada que cambiar.")
+        raise HTTPException(400, f"Nada que cambiar. Recibí: {list(body.keys())}")
+
     vals.append(item_id)
     row = run(f"UPDATE item SET {', '.join(sets)} WHERE item_id = %s "
               f"RETURNING item_id, description, part_code, price_usd, is_active",
               tuple(vals), actor=user["name"])
-    for alias in filter(None, [_clean(body.description), _clean(body.nickname)]):
-        run("""INSERT INTO item_alias (item_id, alias, source) VALUES (%s,%s,'manual')
-               ON CONFLICT (item_id, alias) DO NOTHING""", (item_id, alias))
+    if not row:
+        raise HTTPException(404, "Producto no encontrado.")
+
+    # Seed searchable aliases for the description and nickname if updated.
+    for field in ("description", "nickname"):
+        alias = body.get(field)
+        if alias:
+            alias = str(alias).strip()
+            if alias:
+                run("""INSERT INTO item_alias (item_id, alias, source)
+                       VALUES (%s,%s,'manual')
+                       ON CONFLICT (item_id, alias) DO NOTHING""",
+                    (item_id, alias))
     return row[0]
 
 
