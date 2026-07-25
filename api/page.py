@@ -101,6 +101,29 @@ PAGE = r"""
  .gate button{width:100%;padding:14px;font-size:16px}
  .gate .err{color:var(--warn);font-size:13px;min-height:18px;margin-top:10px}
  .fx{font-size:15px;color:var(--muted)}
+
+ /* Login gate overlay */
+ .gate{position:fixed;inset:0;background:var(--bg);z-index:100;
+       display:flex;align-items:center;justify-content:center;padding:20px}
+ .gate-box{background:var(--card);border:1px solid var(--line);border-radius:16px;
+           padding:36px 32px;width:100%;max-width:380px;
+           display:flex;flex-direction:column;gap:12px;text-align:center}
+ .gate-logo{max-width:180px;max-height:100px;object-fit:contain;
+            margin:0 auto 8px}
+ .gate-title{margin:0;font-size:17px;letter-spacing:.14em;text-transform:uppercase}
+ .gate-sub{margin:0 0 14px;color:var(--muted);font-size:13px}
+ .gate-box input{padding:14px 16px;font-size:17px;border:1px solid var(--line);
+                 border-radius:10px;background:var(--card);color:var(--ink);
+                 width:100%;box-sizing:border-box}
+ .gate-box input:focus{outline:2px solid var(--focus);outline-offset:1px}
+ .gate-pwrow{position:relative}
+ .gate-pwrow input{padding-right:66px}
+ .gate-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+              border:none;background:none;color:var(--focus);font-size:13px;
+              cursor:pointer;padding:6px 10px}
+ .gate-submit{padding:14px;font-size:16px;font-weight:600;
+              border-radius:10px;cursor:pointer;border:1px solid var(--ink)}
+ .gate-err{color:var(--warn);font-size:13px;margin:0;min-height:18px}
  .login{display:flex;flex-direction:column;gap:8px;align-items:stretch;
         min-width:220px}
  .login input{padding:12px 13px;font-size:16px}
@@ -116,7 +139,26 @@ PAGE = r"""
 </style>
 </head>
 <body>
+
+<!-- Login overlay: covers the whole page until a valid session exists. -->
+<div id="gate" class="gate" hidden>
+  <form class="gate-box" id="gate-form" autocomplete="on">
+    <img src="/media/logo.png" alt="DEPO" class="gate-logo"
+         onerror="this.style.display='none'">
+    <h2 class="gate-title">DEPO autolamp</h2>
+    <p class="gate-sub">Ingrese sus credenciales para continuar</p>
+    <input id="gu" placeholder="Usuario" autocapitalize="off"
+           autocomplete="username" required>
+    <div class="gate-pwrow">
+      <input id="gp" type="password" placeholder="Clave"
+             autocomplete="current-password" required>
+      <button type="button" class="gate-toggle" id="gpt">ver</button>
+    </div>
+    <button type="submit" class="gate-submit primary">Entrar</button>
+    <p class="gate-err" id="ge"></p>
+  </form>
 </div>
+
 <div class="wrap">
   <header>
     <img src="/media/logo.png" alt="DEPO" class="logo"
@@ -301,8 +343,49 @@ let fx = {rate:null, source:'oficial'};
 (async function start(){
   user = await api('/api/me');
   try { fx = await api('/api/fx'); } catch(e){}
+  wireGate();
+  if (!user.name) {
+    showGate(true);
+    return;                    // do not load anything else until logged in
+  }
   await boot();
 })();
+
+function showGate(on){
+  const g = document.getElementById('gate');
+  if (!g) return;
+  g.hidden = !on;
+  if (on) setTimeout(() => { const u = document.getElementById('gu'); if (u) u.focus(); }, 0);
+}
+
+function wireGate(){
+  const form = document.getElementById('gate-form');
+  const err  = document.getElementById('ge');
+  const pw   = document.getElementById('gp');
+  const tog  = document.getElementById('gpt');
+  if (!form) return;
+
+  tog.onclick = () => {
+    const show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    tog.textContent = show ? 'ocultar' : 'ver';
+  };
+
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    err.textContent = '';
+    try {
+      user = await api('/api/login', {method:'POST', body: JSON.stringify({
+        username: document.getElementById('gu').value,
+        password: pw.value
+      })});
+      showGate(false);
+      await boot();
+    } catch (e) {
+      err.textContent = e.message || 'No se pudo iniciar sesión.';
+    }
+  };
+}
 
 async function boot(){
   await loadBranches();
@@ -381,36 +464,28 @@ function drawSession(){
     drawFx();
     $('#out').onclick = async () => {
       await api('/api/logout', {method:'POST'});
-      user = {}; await loadSide(); drawSession(); draw(); drawNav();
+      user = {};
+      showGate(true);
+      const g = document.getElementById('gu'), p = document.getElementById('gp');
+      if (g) g.value = ''; if (p) p.value = '';
     };
   } else {
-    el.innerHTML = `<div class="login">
-      <input id="nm" placeholder="Usuario" autocapitalize="off" autocomplete="username">
-      <div class="pwrow">
-        <input id="pw" type="password" placeholder="Clave" autocomplete="current-password">
-        <button type="button" class="toggle" id="pwtog">ver</button>
-      </div>
-      <button class="primary" id="in">Entrar</button>
-      <span class="msg bad" id="lerr"></span>
-    </div>`;
-    $('#in').onclick = doLogin;
-    $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
-    $('#pwtog').onclick = () => {
-      const p = $('#pw');
-      const show = p.type === 'password';
-      p.type = show ? 'text' : 'password';
-      $('#pwtog').textContent = show ? 'ocultar' : 'ver';
-    };
+    // With the login gate, this branch does not normally render.
+    // If it ever does (e.g. session expired mid-session), send them to the gate.
+    el.innerHTML = '';
+    showGate(true);
   }
   drawAdmin();
 }
 
 async function doLogin(){
+  // Kept as a fallback in case anything still calls it; the gate is the
+  // real login flow now.
   try {
     user = await api('/api/login', {method:'POST', body: JSON.stringify(
-      {username: $('#nm').value, password: $('#pw').value})});
+      {username: $('#nm')?.value || '', password: $('#pw')?.value || ''})});
     await loadSide(); drawSession(); draw();
-  } catch (e) { $('#lerr').textContent = e.message; }
+  } catch (e) { const el = $('#lerr'); if (el) el.textContent = e.message; }
 }
 
 // ------------------------------------------------------------------ search
