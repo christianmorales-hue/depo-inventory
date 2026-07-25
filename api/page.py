@@ -101,30 +101,16 @@ PAGE = r"""
  .gate button{width:100%;padding:14px;font-size:16px}
  .gate .err{color:var(--warn);font-size:13px;min-height:18px;margin-top:10px}
  .fx{font-size:15px;color:var(--muted)}
+ .login{display:flex;flex-direction:column;gap:8px;min-width:230px}
+ .login input[type=text],.login input[type=password],
+ .login input:not([type]){padding:12px 13px;font-size:16px;width:100%;
+        box-sizing:border-box}
+ .showpw{display:flex;align-items:center;gap:6px;font-size:13px;
+         color:var(--muted);cursor:pointer;user-select:none}
+ .showpw input{width:auto;margin:0}
+ .login button.primary{padding:12px;font-size:16px;background:var(--ink);
+        color:#fff;border-color:var(--ink)}
 
- /* Login gate overlay */
- .gate{position:fixed;inset:0;background:var(--bg);z-index:100;
-       display:flex;align-items:center;justify-content:center;padding:20px}
- .gate-box{background:var(--card);border:1px solid var(--line);border-radius:16px;
-           padding:36px 32px;width:100%;max-width:380px;
-           display:flex;flex-direction:column;gap:12px;text-align:center}
- .gate-logo{max-width:180px;max-height:100px;object-fit:contain;
-            margin:0 auto 8px}
- .gate-title{margin:0;font-size:17px;letter-spacing:.14em;text-transform:uppercase}
- .gate-sub{margin:0 0 14px;color:var(--muted);font-size:13px}
- .gate-box input{padding:14px 16px;font-size:17px;border:1px solid var(--line);
-                 border-radius:10px;background:var(--card);color:var(--ink);
-                 width:100%;box-sizing:border-box}
- .gate-box input:focus{outline:2px solid var(--focus);outline-offset:1px}
- .gate-pwrow{display:flex;gap:8px;width:100%}
- .gate-pwrow input{flex:1 1 auto;min-width:0;width:auto}
- .gate-toggle{flex:0 0 auto;border:1px solid var(--line);background:var(--card);
-              color:var(--muted);font-size:13px;cursor:pointer;
-              padding:0 12px;border-radius:10px}
- .gate-toggle:hover{border-color:var(--focus);color:var(--focus)}
- .gate-submit{padding:14px;font-size:16px;font-weight:600;
-              border-radius:10px;cursor:pointer;border:1px solid var(--ink)}
- .gate-err{color:var(--warn);font-size:13px;margin:0;min-height:18px}
  .login{display:flex;flex-direction:column;gap:8px;align-items:stretch;
         min-width:220px}
  .login input{padding:12px 13px;font-size:16px}
@@ -140,25 +126,6 @@ PAGE = r"""
 </style>
 </head>
 <body>
-
-<!-- Login overlay: covers the whole page until a valid session exists. -->
-<div id="gate" class="gate" hidden>
-  <form class="gate-box" id="gate-form" autocomplete="on">
-    <img src="/media/logo.png" alt="DEPO" class="gate-logo"
-         onerror="this.style.display='none'">
-    <h2 class="gate-title">DEPO autolamp</h2>
-    <p class="gate-sub">Ingrese sus credenciales para continuar</p>
-    <input id="gu" placeholder="Usuario" autocapitalize="off"
-           autocomplete="username" required>
-    <div class="gate-pwrow">
-      <input id="gp" type="password" placeholder="Clave"
-             autocomplete="current-password" required>
-      <button type="button" class="gate-toggle" id="gpt">ver</button>
-    </div>
-    <button type="submit" class="gate-submit primary">Entrar</button>
-    <p class="gate-err" id="ge"></p>
-  </form>
-</div>
 
 <div class="wrap">
   <header>
@@ -342,69 +309,10 @@ async function api(path, opts) {
 let fx = {rate:null, source:'oficial'};
 
 (async function start(){
-  // Surface script errors to the login gate itself, so if anything goes wrong
-  // the user sees a real message instead of a silent broken button.
-  window.addEventListener('error', function(e){
-    var el = document.getElementById('ge');
-    if (el) el.textContent = 'Error de la pagina: ' + (e.message || 'desconocido');
-  });
-
-  try {
-    user = await api('/api/me');
-  } catch(e) { user = {}; }
+  try { user = await api('/api/me'); } catch(e) { user = {}; }
   try { fx = await api('/api/fx'); } catch(e){}
-  wireGate();
-  if (!user.name) {
-    showGate(true);
-    return;
-  }
   await boot();
 })();
-
-function showGate(on){
-  var g = document.getElementById('gate');
-  if (!g) return;
-  g.hidden = !on;
-  if (on) {
-    setTimeout(function(){
-      var u = document.getElementById('gu');
-      if (u) u.focus();
-    }, 0);
-  }
-}
-
-function wireGate(){
-  var form = document.getElementById('gate-form');
-  var errEl = document.getElementById('ge');
-  var pw    = document.getElementById('gp');
-  var tog   = document.getElementById('gpt');
-  if (!form || !pw || !tog) return;
-
-  tog.onclick = function(){
-    var show = pw.type === 'password';
-    pw.type = show ? 'text' : 'password';
-    tog.textContent = show ? 'ocultar' : 'ver';
-  };
-
-  form.onsubmit = async function(ev){
-    ev.preventDefault();
-    if (errEl) errEl.textContent = '';
-    var uEl = document.getElementById('gu');
-    try {
-      user = await api('/api/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          username: uEl ? uEl.value : '',
-          password: pw.value
-        })
-      });
-      showGate(false);
-      await boot();
-    } catch (e) {
-      if (errEl) errEl.textContent = e.message || 'No se pudo iniciar sesion.';
-    }
-  };
-}
 
 async function boot(){
   await loadBranches();
@@ -483,28 +391,31 @@ function drawSession(){
     drawFx();
     $('#out').onclick = async () => {
       await api('/api/logout', {method:'POST'});
-      user = {};
-      showGate(true);
-      const g = document.getElementById('gu'), p = document.getElementById('gp');
-      if (g) g.value = ''; if (p) p.value = '';
+      user = {}; await loadSide(); drawSession(); draw(); drawNav();
     };
   } else {
-    // With the login gate, this branch does not normally render.
-    // If it ever does (e.g. session expired mid-session), send them to the gate.
-    el.innerHTML = '';
-    showGate(true);
+    el.innerHTML = `<div class="login">
+      <input id="nm" placeholder="Usuario" autocapitalize="off" autocomplete="username">
+      <input id="pw" type="password" placeholder="Clave" autocomplete="current-password">
+      <label class="showpw"><input type="checkbox" id="pwck"> mostrar clave</label>
+      <button class="primary" id="in">Entrar</button>
+      <span class="msg bad" id="lerr"></span>
+    </div>`;
+    $('#in').onclick = doLogin;
+    $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+    $('#pwck').onchange = () => {
+      $('#pw').type = $('#pwck').checked ? 'text' : 'password';
+    };
   }
   drawAdmin();
 }
 
 async function doLogin(){
-  // Kept as a fallback in case anything still calls it; the gate is the
-  // real login flow now.
   try {
     user = await api('/api/login', {method:'POST', body: JSON.stringify(
-      {username: $('#nm')?.value || '', password: $('#pw')?.value || ''})});
-    await loadSide(); drawSession(); draw();
-  } catch (e) { const el = $('#lerr'); if (el) el.textContent = e.message; }
+      {username: $('#nm').value.trim(), password: $('#pw').value})});
+    await loadSide(); drawSession(); draw(); drawNav();
+  } catch (e) { $('#lerr').textContent = e.message; }
 }
 
 // ------------------------------------------------------------------ search
