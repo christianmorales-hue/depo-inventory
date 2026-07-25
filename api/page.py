@@ -444,6 +444,10 @@ async function doLogin(){
 
 // ------------------------------------------------------------------ search
 $('#q').addEventListener('input', () => {
+  // Don't kick off a new search if the user is currently editing a product
+  // (admin panel open with typed values that a fresh render would wipe).
+  if (openId != null && document.activeElement &&
+      document.activeElement.closest('#admin')) return;
   clearTimeout(window.t); window.t = setTimeout(search, 220);
 });
 
@@ -667,15 +671,22 @@ function panel(r){
         say('#emsg', true, 'Guardado.'); refresh();
       } catch (e) { say('#emsg', false, e.message); }
     };
-    ed.querySelector('#ego').onclick = () => save({
-      description: ed.querySelector('#ed').value,
-      part_code: ed.querySelector('#ec').value || null,
-      price_usd: parseFloat(ed.querySelector('#ep').value) || null,
-      product_type: ed.querySelector('#etp').value || null,
-      make: ed.querySelector('#emk').value || null,
-      model: ed.querySelector('#emd').value || null,
-      year_text: ed.querySelector('#eyr').value || null,
-      nickname: ed.querySelector('#enk').value || null});
+    ed.querySelector('#ego').onclick = () => {
+      // Only send fields that were actually filled in. An empty price field
+      // means "don't change it", never "set to null".
+      const body = {description: ed.querySelector('#ed').value};
+      const code = ed.querySelector('#ec').value.trim();
+      if (code) body.part_code = code;
+      const price = parseFloat(ed.querySelector('#ep').value);
+      if (!isNaN(price)) body.price_usd = price;
+      const attrs = {product_type:'#etp', make:'#emk', model:'#emd',
+                     year_text:'#eyr', nickname:'#enk'};
+      for (const [key, sel] of Object.entries(attrs)) {
+        const v = ed.querySelector(sel).value.trim();
+        if (v) body[key] = v;
+      }
+      save(body);
+    };
     ed.querySelector('#etog').onclick = () => save({is_active: !r.is_active});
   }
   return p;
