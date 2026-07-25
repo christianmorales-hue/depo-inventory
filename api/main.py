@@ -167,26 +167,6 @@ def me(request: Request):
     return who(request) or {}
 
 
-# ------------------------------------------------------------------ reading
-SEARCH_SQL = """
-SELECT i.item_id, i.sku, i.part_code, i.side, i.description, i.unit_price,
-       i.is_active, i.photo_path,
-       coalesce(json_agg(json_build_object('branch_id', b.branch_id, 'qty', s.qty))
-                FILTER (WHERE b.branch_id IS NOT NULL), '[]') AS stock
-FROM search_items(%s, 40) r
-JOIN item i ON i.item_id = r.item_id
-LEFT JOIN stock_on_hand s ON s.item_id = i.item_id AND s.condition = 'good'
-LEFT JOIN branch b ON b.branch_id = s.branch_id AND b.is_active
-GROUP BY i.item_id, r.score
-ORDER BY r.score DESC
-"""
-
-RECENT_SQL = SEARCH_SQL.replace("FROM search_items(%s, 40) r\nJOIN item i ON i.item_id = r.item_id",
-                                "FROM item i").replace("ORDER BY r.score DESC",
-                                                       "ORDER BY i.created_at DESC, i.item_id DESC LIMIT 40"
-                                                       ).replace(", r.score", "")
-
-
 @app.get("/api/branches")
 def branches(request: Request):
     show_all = who(request) and who(request)["role"] == "admin"
@@ -194,13 +174,6 @@ def branches(request: Request):
                + ("" if show_all else " WHERE is_active")
                + " ORDER BY is_real DESC, name")
 
-
-@app.get("/api/search")
-def search(q: str = ""):
-    rows = run(SEARCH_SQL, (q.strip(),)) if len(q.strip()) >= 2 else run(RECENT_SQL)
-    for r in rows:
-        r["unit_price"] = float(r["unit_price"]) if r["unit_price"] is not None else None
-    return JSONResponse(rows)
 
 
 @app.get("/api/item/{item_id}/history")
