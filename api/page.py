@@ -495,9 +495,8 @@ function draw(){
          <div class="code">${esc(r.part_code || 'sin código')}` +
          (r.is_active ? '' : ' · inactivo') + `</div></div>` +
       `<div class="price-cell">` +
-        (r.price_bob != null
-          ? `<b>Bs ${r.price_bob}</b>` +
-            (r.price_usd != null ? `<small>$ ${r.price_usd}</small>` : '')
+        (r.price_usd != null
+          ? `<b>USD ${r.price_usd}</b>`
           : `<span class="sub">sin precio</span>`) +
       `</div>` +
       branches.map(b => {
@@ -653,7 +652,7 @@ function panel(r){
         <input id="ec" value="${esc(r.part_code || '')}" placeholder="Código"
                style="width:130px">
         <input id="ep" type="number" step="0.01" value="${r.price_usd ?? ''}"
-               placeholder="Precio $" style="width:110px">
+               placeholder="Precio en USD" style="width:140px">
       </div>
       <div class="bar" style="margin-top:8px">
         <input id="etp" value="${esc(r.product_type || '')}" placeholder="Tipo (espejo…)" style="width:130px">
@@ -1197,7 +1196,7 @@ function drawAdmin(){
       <input id="nc" placeholder="Código" style="width:120px">
       <select id="ns"><option value="">sin lado</option><option>L</option>
         <option>R</option></select>
-      <input id="np" type="number" step="0.01" placeholder="Precio $" style="width:110px">
+      <input id="np" type="number" step="0.01" placeholder="Precio en USD" style="width:140px">
     </div>
     <div class="bar" style="margin-top:8px">
       <span class="sub">opcional:</span>
