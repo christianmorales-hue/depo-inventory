@@ -116,11 +116,11 @@ PAGE = r"""
                  border-radius:10px;background:var(--card);color:var(--ink);
                  width:100%;box-sizing:border-box}
  .gate-box input:focus{outline:2px solid var(--focus);outline-offset:1px}
- .gate-pwrow{display:flex;gap:8px;align-items:stretch}
- .gate-pwrow input{flex:1;min-width:0}
- .gate-toggle{border:1px solid var(--line);background:var(--card);
-              color:var(--focus);font-size:13px;cursor:pointer;
-              padding:0 14px;border-radius:10px;white-space:nowrap;flex:0 0 auto}
+ .gate-pwrow { position: relative; display: flex; width: 100%; }
+ .gate-pwrow input { flex: 1; padding-right: 60px; /* Keeps text away from the button */ }
+ .gate-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+                border: none; background: none; color: var(--focus);
+                font-size: 13px; cursor: pointer; padding: 6px 8px; }
  .gate-toggle:hover{border-color:var(--focus)}
  .gate-submit{padding:14px;font-size:16px;font-weight:600;
               border-radius:10px;cursor:pointer;border:1px solid var(--ink)}
@@ -394,7 +394,7 @@ function wireGate(){
       user = await api('/api/login', {
         method: 'POST',
         body: JSON.stringify({
-          username: uEl ? uEl.value : '',
+          username: uEl ? uEl.value.trim() : '',
           password: pw.value
         })
       });
