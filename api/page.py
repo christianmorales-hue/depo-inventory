@@ -763,16 +763,30 @@ async function csearch(){
       <div style="flex:1;min-width:180px">
         <div class="desc">${esc(r.description)}</div>
         <div class="code">${esc(r.part_code||'sin código')}${
-          r.price_bob!=null?' · Bs '+r.price_bob:''}</div></div>
-      <button class="primary" data-add='${JSON.stringify(
-        {item_id:r.item_id,description:r.description,side:r.side,
-         part_code:r.part_code,price_bob:r.price_bob||0}).replace(/'/g,"&#39;")}'>Agregar</button>
+          r.price_bob!=null?' · Bs '+r.price_bob:' · sin precio'}</div></div>
+      <button class="primary" data-add-id="${r.item_id}">Agregar</button>
     </div></div>`).join('');
-  box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
-    const it = JSON.parse(b.dataset.add.replace(/&#39;/g,"'"));
-    const existing = cart.find(c => c.item_id === it.item_id);
+  box.querySelectorAll('[data-add-id]').forEach(b => b.onclick = async () => {
+    // Always refetch by SKU so the cart price is the real current one.
+    const id = parseInt(b.dataset.addId, 10);
+    let fresh;
+    try {
+      const one = await api('/api/search?q=DEPO-' + String(id).padStart(5,'0'));
+      fresh = one.find(x => x.item_id === id) || one[0];
+    } catch (e) { fresh = null; }
+    if (!fresh) {
+      alert('No se pudo cargar el producto. Intente de nuevo.');
+      return;
+    }
+    if (fresh.price_bob == null || fresh.price_bob === 0) {
+      if (!confirm('Este producto no tiene precio configurado. ¿Agregar igual?')) return;
+    }
+    const existing = cart.find(c => c.item_id === fresh.item_id);
     if (existing) existing.qty += 1;
-    else cart.push({...it, qty: 1});
+    else cart.push({
+      item_id: fresh.item_id, description: fresh.description, side: fresh.side,
+      part_code: fresh.part_code, price_bob: fresh.price_bob || 0, qty: 1
+    });
     $('#cq').value = ''; box.innerHTML = ''; drawCart();
   });
 }
@@ -936,22 +950,43 @@ async function nsearch(){
       <div style="flex:1;min-width:180px">
         <div class="desc">${esc(r.description)}</div>
         <div class="code">${esc(r.part_code||'sin código')}${
-          r.price_bob!=null?' · Bs '+r.price_bob:''} · en stock: ${
+          r.price_bob!=null?' · Bs '+r.price_bob:' · sin precio'} · en stock: ${
           branches.map(b => b.name + ' ' + (
             (r.stock.find(s => s.branch_id === b.branch_id) || {}).qty || 0
           )).join(', ')}</div></div>
-      <button class="primary" data-add='${JSON.stringify(
-        {item_id:r.item_id,description:r.description,side:r.side,
-         part_code:r.part_code,price_bob:r.price_bob||0,
-         stock:r.stock}).replace(/'/g,"&#39;")}'>Agregar</button>
+      <button class="primary" data-add-id="${r.item_id}">Agregar</button>
     </div></div>`).join('');
-  box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
-    const it = JSON.parse(b.dataset.add.replace(/&#39;/g,"'"));
-    // Default to the first branch that has stock, if any.
+  box.querySelectorAll('[data-add-id]').forEach(b => b.onclick = async () => {
+    // Refetch the item straight from the server. This guarantees the price
+    // in the cart is whatever gerencia last set - never a stale snapshot
+    // from an older search response.
+    const id = parseInt(b.dataset.addId, 10);
+    let fresh;
+    try {
+      // Search by SKU to get one authoritative row back.
+      const one = await api('/api/search?q=DEPO-' + String(id).padStart(5,'0'));
+      fresh = one.find(x => x.item_id === id) || one[0];
+    } catch (e) { fresh = null; }
+    if (!fresh) {
+      alert('No se pudo cargar el producto. Intente de nuevo.');
+      return;
+    }
+    if (fresh.price_bob == null || fresh.price_bob === 0) {
+      if (!confirm('Este producto no tiene precio configurado. ¿Agregar igual?')) return;
+    }
     const first = branches.find(br =>
-      (it.stock.find(s => s.branch_id === br.branch_id) || {}).qty > 0);
+      (fresh.stock.find(s => s.branch_id === br.branch_id) || {}).qty > 0);
     const branch_id = first ? first.branch_id : (branches[0] || {}).branch_id;
-    ncart.push({...it, qty: 1, branch_id});
+    ncart.push({
+      item_id: fresh.item_id,
+      description: fresh.description,
+      side: fresh.side,
+      part_code: fresh.part_code,
+      price_bob: fresh.price_bob || 0,
+      stock: fresh.stock,
+      qty: 1,
+      branch_id
+    });
     $('#nq').value = ''; box.innerHTML = ''; drawNCart();
   });
 }
