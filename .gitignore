@@ -1,2 +1,17 @@
 media/*
 !media/logo.pngdata/raw/
+
+# Python bytecode
+api/__pycache__/
+__pycache__/
+
+# Backups and processed data (regenerable from raw)
+backup_*.sql
+data/out/*.csv
+data/raw/*.csv
+
+# Mac clutter
+.DS_Store
+
+# Random uploaded folders
+files/
