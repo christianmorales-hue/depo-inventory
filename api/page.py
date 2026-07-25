@@ -117,10 +117,12 @@ PAGE = r"""
                  width:100%;box-sizing:border-box}
  .gate-box input:focus{outline:2px solid var(--focus);outline-offset:1px}
  .gate-pwrow{position:relative}
- .gate-pwrow input{padding-right:66px}
- .gate-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);
-              border:none;background:none;color:var(--focus);font-size:13px;
-              cursor:pointer;padding:6px 10px}
+ .gate-pwrow input{padding-right:74px}
+ .gate-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+              border:1px solid var(--line);background:var(--card);
+              color:var(--focus);font-size:13px;cursor:pointer;
+              padding:6px 10px;border-radius:6px}
+ .gate-toggle:hover{border-color:var(--focus)}
  .gate-submit{padding:14px;font-size:16px;font-weight:600;
               border-radius:10px;cursor:pointer;border:1px solid var(--ink)}
  .gate-err{color:var(--warn);font-size:13px;margin:0;min-height:18px}
@@ -341,48 +343,66 @@ async function api(path, opts) {
 let fx = {rate:null, source:'oficial'};
 
 (async function start(){
-  user = await api('/api/me');
+  // Surface script errors to the login gate itself, so if anything goes wrong
+  // the user sees a real message instead of a silent broken button.
+  window.addEventListener('error', function(e){
+    var el = document.getElementById('ge');
+    if (el) el.textContent = 'Error de la pagina: ' + (e.message || 'desconocido');
+  });
+
+  try {
+    user = await api('/api/me');
+  } catch(e) { user = {}; }
   try { fx = await api('/api/fx'); } catch(e){}
   wireGate();
   if (!user.name) {
     showGate(true);
-    return;                    // do not load anything else until logged in
+    return;
   }
   await boot();
 })();
 
 function showGate(on){
-  const g = document.getElementById('gate');
+  var g = document.getElementById('gate');
   if (!g) return;
   g.hidden = !on;
-  if (on) setTimeout(() => { const u = document.getElementById('gu'); if (u) u.focus(); }, 0);
+  if (on) {
+    setTimeout(function(){
+      var u = document.getElementById('gu');
+      if (u) u.focus();
+    }, 0);
+  }
 }
 
 function wireGate(){
-  const form = document.getElementById('gate-form');
-  const err  = document.getElementById('ge');
-  const pw   = document.getElementById('gp');
-  const tog  = document.getElementById('gpt');
-  if (!form) return;
+  var form = document.getElementById('gate-form');
+  var errEl = document.getElementById('ge');
+  var pw    = document.getElementById('gp');
+  var tog   = document.getElementById('gpt');
+  if (!form || !pw || !tog) return;
 
-  tog.onclick = () => {
-    const show = pw.type === 'password';
+  tog.onclick = function(){
+    var show = pw.type === 'password';
     pw.type = show ? 'text' : 'password';
     tog.textContent = show ? 'ocultar' : 'ver';
   };
 
-  form.onsubmit = async (ev) => {
+  form.onsubmit = async function(ev){
     ev.preventDefault();
-    err.textContent = '';
+    if (errEl) errEl.textContent = '';
+    var uEl = document.getElementById('gu');
     try {
-      user = await api('/api/login', {method:'POST', body: JSON.stringify({
-        username: document.getElementById('gu').value,
-        password: pw.value
-      })});
+      user = await api('/api/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: uEl ? uEl.value : '',
+          password: pw.value
+        })
+      });
       showGate(false);
       await boot();
     } catch (e) {
-      err.textContent = e.message || 'No se pudo iniciar sesión.';
+      if (errEl) errEl.textContent = e.message || 'No se pudo iniciar sesion.';
     }
   };
 }
