@@ -117,7 +117,7 @@ PAGE = r"""
                  width:100%;box-sizing:border-box}
  .gate-box input:focus{outline:2px solid var(--focus);outline-offset:1px}
  .gate-pwrow { position: relative; display: flex; width: 100%; }
- .gate-pwrow input { flex: 1; padding-right: 60px; /* Keeps text away from the button */ }
+ .gate-pwrow input { flex: 1; padding-right: 70px; /* Keeps text away from the button */ }
  .gate-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
                 border: none; background: none; color: var(--focus);
                 font-size: 13px; cursor: pointer; padding: 6px 8px; }
