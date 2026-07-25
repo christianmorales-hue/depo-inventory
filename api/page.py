@@ -496,7 +496,8 @@ function draw(){
          (r.is_active ? '' : ' · inactivo') + `</div></div>` +
       `<div class="price-cell">` +
         (r.price_usd != null
-          ? `<b>USD ${r.price_usd}</b>`
+          ? `<b>USD ${r.price_usd}</b>` +
+            (r.price_bob != null ? `<small>Bs ${r.price_bob}</small>` : '')
           : `<span class="sub">sin precio</span>`) +
       `</div>` +
       branches.map(b => {
