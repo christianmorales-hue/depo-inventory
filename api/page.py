@@ -13,22 +13,28 @@ PAGE = r"""
  :root[data-theme="dark"]{--bg:#14181B;--card:#1E2429;--ink:#E8ECEF;
        --muted:#95A0A8;--line:#333C43;--have:#3F9D6B;--none:#5A656D;
        --amber:#D98B2B;--focus:#5B9BD5;--warn:#E06B60;}
+ :root[data-theme="dracula"]{--bg:#282A36;--card:#343746;--ink:#F8F8F2;
+       --muted:#9BA0B4;--line:#44475A;--have:#50FA7B;--none:#6272A4;
+       --amber:#FFB86C;--focus:#BD93F9;--warn:#FF5555;}
  *{box-sizing:border-box}
  body{margin:0;background:var(--bg);color:var(--ink);
       font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
  .wrap{max-width:1040px;margin:0 auto;padding:20px 16px 80px}
  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
  h1{font-size:19px;letter-spacing:.14em;text-transform:uppercase;margin:0}
- .logo{height:42px;width:auto;object-fit:contain;display:block}
+ .logo{height:56px;width:auto;object-fit:contain;display:block;
+        border:2px solid var(--line);border-radius:12px;padding:4px 8px;
+        background:var(--card)}
  .sub{color:var(--muted);font-size:15px}
  .spacer{flex:1}
  a{color:var(--focus)}
 
  nav{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:20px;
      border-bottom:1px solid var(--line);padding-bottom:10px}
- nav button{border:none;background:none;padding:7px 12px;border-radius:7px;
-            color:var(--muted);font-size:14px}
- nav button.on{background:var(--ink);color:#fff}
+ nav button{border:none;background:none;padding:8px 14px;border-radius:7px;
+            color:var(--muted);font-size:16px}
+ nav button.on{background:var(--focus);color:#fff}
+ nav button:hover{color:var(--ink)}
  nav .pill{background:var(--amber);color:#fff;border-radius:20px;padding:1px 7px;
            font-size:11px;margin-left:5px}
 
@@ -145,7 +151,7 @@ PAGE = r"""
          onerror="this.replaceWith(Object.assign(document.createElement('h1'),{textContent:'DEPO'}))">
     <span class="sub">Existencias por sucursal</span>
     <span class="spacer"></span>
-    <button class="link" id="theme-toggle" title="Cambiar tema">◐</button>
+    <button class="link" id="theme-toggle" title="Cambiar tema">Tema</button>
     <span id="session"></span>
   </header>
 
@@ -400,16 +406,22 @@ let fx = {rate:null, source:'oficial'};
 })();
 
 function initTheme(){
+  const THEMES = ['light', 'dark', 'dracula'];
+  const LABELS = {light:'☀ Claro', dark:'☾ Oscuro', dracula:'🧛 Dracula'};
   const m = document.cookie.match(/(?:^|; )theme=([^;]+)/);
-  const theme = m ? m[1] : 'light';
+  let theme = m && THEMES.includes(m[1]) ? m[1] : 'light';
   document.documentElement.setAttribute('data-theme', theme);
   const btn = document.getElementById('theme-toggle');
-  if (btn) btn.onclick = () => {
-    const cur = document.documentElement.getAttribute('data-theme');
-    const next = cur === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    document.cookie = 'theme=' + next + ';path=/;max-age=31536000';
-  };
+  if (btn) {
+    btn.textContent = LABELS[theme];
+    btn.onclick = () => {
+      const cur = document.documentElement.getAttribute('data-theme');
+      const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
+      document.documentElement.setAttribute('data-theme', next);
+      btn.textContent = LABELS[next];
+      document.cookie = 'theme=' + next + ';path=/;max-age=31536000';
+    };
+  }
 }
 
 function showApp(loggedIn){
@@ -478,7 +490,7 @@ function drawFx(){
   const el = $('#fxbox'); if (!el) return;
   if (!fx.rate) { el.textContent = 'sin tipo de cambio'; return; }
   const label = fx.source === 'blue' ? 'paralelo' : 'oficial';
-  el.innerHTML = `TC ${label}: <b>${fx.rate}</b> Bs/$`;
+  el.innerHTML = `TC ${label}: <b>${fx.rate}</b> Bs/USD`;
   if (user.role === 'admin') {
     el.innerHTML += ` <button class="link" id="fxsw">cambiar</button>`;
     setTimeout(() => { const b = $('#fxsw'); if (b) b.onclick = switchFx; }, 0);
