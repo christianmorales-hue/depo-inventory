@@ -116,12 +116,12 @@ PAGE = r"""
                  border-radius:10px;background:var(--card);color:var(--ink);
                  width:100%;box-sizing:border-box}
  .gate-box input:focus{outline:2px solid var(--focus);outline-offset:1px}
- .gate-pwrow{position:relative;width:100%}
- .gate-pwrow input{width:100%;box-sizing:border-box;padding-right:56px}
- .gate-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);
-              border:none;background:none;color:var(--focus);
-              font-size:12px;cursor:pointer;padding:4px 6px;line-height:1}
- .gate-toggle:hover{text-decoration:underline}
+ .gate-pwrow{display:flex;gap:8px;width:100%}
+ .gate-pwrow input{flex:1 1 auto;min-width:0;width:auto}
+ .gate-toggle{flex:0 0 auto;border:1px solid var(--line);background:var(--card);
+              color:var(--muted);font-size:13px;cursor:pointer;
+              padding:0 12px;border-radius:10px}
+ .gate-toggle:hover{border-color:var(--focus);color:var(--focus)}
  .gate-submit{padding:14px;font-size:16px;font-weight:600;
               border-radius:10px;cursor:pointer;border:1px solid var(--ink)}
  .gate-err{color:var(--warn);font-size:13px;margin:0;min-height:18px}
