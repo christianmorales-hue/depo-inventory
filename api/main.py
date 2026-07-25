@@ -302,24 +302,6 @@ class ItemPatch(BaseModel):
     is_active: bool | None = None
 
 
-@app.patch("/api/items/{item_id}")
-def update_item(item_id: int, body: ItemPatch, request: Request):
-    user = require(request, "admin")
-    sets, vals = [], []
-    for field in ("description", "part_code", "unit_price", "is_active"):
-        value = getattr(body, field)
-        if value is not None:
-            sets.append(f"{field} = %s")
-            vals.append(value)
-    if not sets:
-        raise HTTPException(400, "Nada que cambiar.")
-    vals.append(item_id)
-    row = run(f"UPDATE item SET {', '.join(sets)} WHERE item_id = %s "
-              f"RETURNING item_id, description, part_code, unit_price, is_active",
-              tuple(vals), actor=user["name"])
-    if body.description:
-        run("""INSERT INTO item_alias (item_id, alias, source) VALUES (%s, %s, 'manual')
-               ON CONFLICT (item_id, alias) DO NOTHING""",
             (item_id, body.description.strip()))
     return row[0]
 
