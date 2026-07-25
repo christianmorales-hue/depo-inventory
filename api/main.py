@@ -302,10 +302,6 @@ class ItemPatch(BaseModel):
     is_active: bool | None = None
 
 
-            (item_id, body.description.strip()))
-    return row[0]
-
-
 class BranchIn(BaseModel):
     code: str | None = None
     name: str
