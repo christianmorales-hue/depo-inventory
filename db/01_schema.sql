@@ -5,16 +5,20 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
 -- unaccent() is not IMMUTABLE, so it cannot be used directly in an index or a
--- generated column. This wrapper makes it usable.
-CREATE OR REPLACE FUNCTION f_unaccent(text) RETURNS text
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS
-$$ SELECT public.unaccent('public.unaccent'::regdictionary, $1) $$;
+-- generated column. This wrapper makes it usable. The SET search_path is
+-- important - PostgreSQL 18 needs it so functions called during CREATE INDEX
+-- can find each other reliably.
+CREATE OR REPLACE FUNCTION public.f_unaccent(text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  SET search_path = public, pg_catalog
+  AS $$ SELECT unaccent($1) $$;
 
 -- Normalisation used everywhere for matching: uppercase, no accents,
 -- single spaces, no punctuation noise.
-CREATE OR REPLACE FUNCTION norm_text(text) RETURNS text
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS
-$$ SELECT regexp_replace(upper(f_unaccent($1)), '[^A-Z0-9]+', ' ', 'g') $$;
+CREATE OR REPLACE FUNCTION public.norm_text(text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  SET search_path = public, pg_catalog
+  AS $$ SELECT regexp_replace(upper(public.f_unaccent($1)), '[^A-Z0-9]+', ' ', 'g') $$;
 
 
 -- ---------------------------------------------------------------- branches
