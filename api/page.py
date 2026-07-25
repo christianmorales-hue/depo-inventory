@@ -116,12 +116,12 @@ PAGE = r"""
                  border-radius:10px;background:var(--card);color:var(--ink);
                  width:100%;box-sizing:border-box}
  .gate-box input:focus{outline:2px solid var(--focus);outline-offset:1px}
- .gate-pwrow { position: relative; display: flex; width: 100%; }
- .gate-pwrow input { flex: 1; padding-right: 70px; /* Keeps text away from the button */ }
- .gate-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-                border: none; background: none; color: var(--focus);
-                font-size: 13px; cursor: pointer; padding: 6px 8px; }
- .gate-toggle:hover{border-color:var(--focus)}
+ .gate-pwrow{position:relative;width:100%}
+ .gate-pwrow input{width:100%;box-sizing:border-box;padding-right:56px}
+ .gate-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+              border:none;background:none;color:var(--focus);
+              font-size:12px;cursor:pointer;padding:4px 6px;line-height:1}
+ .gate-toggle:hover{text-decoration:underline}
  .gate-submit{padding:14px;font-size:16px;font-weight:600;
               border-radius:10px;cursor:pointer;border:1px solid var(--ink)}
  .gate-err{color:var(--warn);font-size:13px;margin:0;min-height:18px}
@@ -394,7 +394,7 @@ function wireGate(){
       user = await api('/api/login', {
         method: 'POST',
         body: JSON.stringify({
-          username: uEl ? uEl.value.trim() : '',
+          username: uEl ? uEl.value : '',
           password: pw.value
         })
       });
