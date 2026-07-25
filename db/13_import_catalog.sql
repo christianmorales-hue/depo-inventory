@@ -1,9 +1,12 @@
 -- Load a new supplier catalog into the item table.
 -- Duplicates (by part_code) are skipped, not overwritten.
 --
--- Usage:  from data/out folder, once per file:
---   psql "$DATABASE_URL" -v csvfile='new_items_LISTA_EN_STOCK_04-03-2026.csv' \
---                       -f ../../db/13_import_catalog.sql
+-- Usage: from the folder containing the CSV, symlink or rename it to
+-- new_items.csv, then run the migration:
+--
+--   cd data/out
+--   cp new_items_LISTA_EN_STOCK_04-03-2026.csv new_items.csv
+--   psql "$DATABASE_URL" -f ../../db/13_import_catalog.sql
 --
 -- No stock movements are created. Every branch starts at zero for these
 -- items until a physical count adds them.
@@ -23,7 +26,7 @@ CREATE TEMP TABLE stg_new (
   part_number  text
 );
 
-\copy stg_new FROM :'csvfile' WITH (FORMAT csv, HEADER true)
+\copy stg_new FROM 'new_items.csv' WITH (FORMAT csv, HEADER true)
 
 -- Categories: create any missing ones so items can point to them.
 INSERT INTO category (name)
