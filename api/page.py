@@ -123,6 +123,8 @@ PAGE = r"""
         color:#fff;border-color:var(--ink)}
  .fx b{color:var(--ink)}
  .price-usd{color:var(--muted);font-size:12px}
+ .please-login{text-align:center;padding:80px 20px;color:var(--muted);
+        font-size:17px}
 </style>
 </head>
 <body>
@@ -136,6 +138,11 @@ PAGE = r"""
     <span id="session"></span>
   </header>
 
+  <div id="please-login" class="please-login" hidden>
+    <p>Inicie sesión arriba a la derecha para ver el inventario.</p>
+  </div>
+
+  <div id="app" hidden>
   <nav id="nav"></nav>
 
   <section id="v-buscar">
@@ -275,6 +282,7 @@ PAGE = r"""
     <div class="msg" id="gmsg"></div>
     <div id="arch"></div>
   </section>
+  </div>
 </div>
 
 <script>
@@ -314,9 +322,19 @@ let fx = {rate:null, source:'oficial'};
   await boot();
 })();
 
+function showApp(loggedIn){
+  const app = document.getElementById('app');
+  const prompt = document.getElementById('please-login');
+  if (app) app.hidden = !loggedIn;
+  if (prompt) prompt.hidden = loggedIn;
+}
+
 async function boot(){
+  drawSession();
+  showApp(!!user.name);
+  if (!user.name) return;         // logged out: show only the header + prompt
   await loadBranches();
-  drawSession(); drawNav();
+  drawNav();
   await Promise.all([search(), loadSide()]);
 }
 
@@ -391,7 +409,7 @@ function drawSession(){
     drawFx();
     $('#out').onclick = async () => {
       await api('/api/logout', {method:'POST'});
-      user = {}; await loadSide(); drawSession(); draw(); drawNav();
+      user = {}; showApp(false); drawSession();
     };
   } else {
     el.innerHTML = `<div class="login">
@@ -414,6 +432,8 @@ async function doLogin(){
   try {
     user = await api('/api/login', {method:'POST', body: JSON.stringify(
       {username: $('#nm').value.trim(), password: $('#pw').value})});
+    showApp(true);
+    await loadBranches();
     await loadSide(); drawSession(); draw(); drawNav();
   } catch (e) { $('#lerr').textContent = e.message; }
 }
