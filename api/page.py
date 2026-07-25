@@ -22,8 +22,8 @@ PAGE = r"""
  .wrap{max-width:1040px;margin:0 auto;padding:20px 16px 80px}
  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
  h1{font-size:19px;letter-spacing:.14em;text-transform:uppercase;margin:0}
- .logo{height:56px;width:auto;object-fit:contain;display:block;
-        border:2px solid var(--line);border-radius:12px;padding:4px 8px;
+ .logo{height:70px;width:auto;object-fit:contain;display:block;
+        border:2px solid var(--line);border-radius:14px;padding:5px 10px;
         background:var(--card)}
  .sub{color:var(--muted);font-size:15px}
  .spacer{flex:1}
@@ -31,8 +31,8 @@ PAGE = r"""
 
  nav{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:20px;
      border-bottom:1px solid var(--line);padding-bottom:10px}
- nav button{border:none;background:none;padding:8px 14px;border-radius:7px;
-            color:var(--muted);font-size:16px}
+ nav button{border:none;background:none;padding:9px 15px;border-radius:7px;
+            color:var(--muted);font-size:18px}
  nav button.on{background:var(--focus);color:#fff}
  nav button:hover{color:var(--ink)}
  nav .pill{background:var(--amber);color:#fff;border-radius:20px;padding:1px 7px;
@@ -47,13 +47,16 @@ PAGE = r"""
  .hint{color:var(--muted);font-size:13px;margin:9px 2px 18px}
 
  button{cursor:pointer;border:1px solid var(--line);background:var(--card);
-        border-radius:8px;padding:9px 13px}
+        color:var(--ink);border-radius:8px;padding:9px 13px;font-size:14px}
  button:hover{border-color:var(--focus)}
- button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
- button.danger{color:var(--warn)}
+ button.primary{background:var(--focus);color:#fff;border-color:var(--focus)}
+ button.primary:hover{filter:brightness(1.08)}
+ button.danger{color:var(--warn);border-color:var(--line)}
+ button.danger:hover{border-color:var(--warn)}
  button.link{border:none;background:none;padding:4px;color:var(--focus);
              text-decoration:underline}
- button.wa{border-color:#128C7E;color:#0B6B60}
+ button.wa{border-color:var(--have);color:var(--have);background:var(--card)}
+ button.wa:hover{background:var(--have);color:#fff}
 
  .grid{display:grid;gap:12px;align-items:center}
  .heads{padding:0 14px 7px;font-size:11px;letter-spacing:.1em;
@@ -117,8 +120,7 @@ PAGE = r"""
  .showpw{display:flex;align-items:center;gap:6px;font-size:13px;
          color:var(--muted);cursor:pointer;user-select:none}
  .showpw input{width:auto;margin:0}
- .login button.primary{padding:12px;font-size:16px;background:var(--ink);
-        color:#fff;border-color:var(--ink)}
+ .login button.primary{padding:12px;font-size:16px}
 
  .login{display:flex;flex-direction:column;gap:8px;align-items:stretch;
         min-width:220px}
@@ -128,8 +130,7 @@ PAGE = r"""
  .login .toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);
         border:none;background:none;color:var(--focus);font-size:13px;
         padding:6px 8px;cursor:pointer}
- .login button.primary{padding:12px;font-size:16px;background:var(--ink);
-        color:#fff;border-color:var(--ink)}
+ .login button.primary{padding:12px;font-size:16px}
  .fx b{color:var(--ink)}
  .price-cell{display:flex;flex-direction:column;justify-content:center;
         align-items:flex-end;text-align:right;padding-right:6px;line-height:1.2}
