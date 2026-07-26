@@ -30,3 +30,4 @@ media/*
 # Local scratch
 *.log
 *.tmp
+data/raw/
