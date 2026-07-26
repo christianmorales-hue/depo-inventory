@@ -1,17 +1,32 @@
-media/*
-!media/logo.pngdata/raw/
+# Secrets — NEVER commit
+.env
+*.env
 
-# Python bytecode
-api/__pycache__/
+# Python
 __pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
 
-# Backups and processed data (regenerable from raw)
-backup_*.sql
-data/out/*.csv
-data/raw/*.csv
-
-# Mac clutter
+# macOS
 .DS_Store
+**/.DS_Store
 
-# Random uploaded folders
+# Database backups
+backup_*.sql
+*.dump
+
+# Generated / processed data (reproducible from raw)
+data/out/
+reports/
+filess/
 files/
+
+# Uploaded photos (not persisted; move to object storage later)
+media/*
+!media/logo.png
+
+# Local scratch
+*.log
+*.tmp
