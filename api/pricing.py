@@ -75,10 +75,19 @@ def current_rate():
                     for k, v in rows.items()}}
 
 
+def round_bob(value):
+    """Round a Boliviano amount to the nearest 0.50, so prices come out as
+    whole or half bolivianos (e.g. 234.13 -> 234.00, 234.30 -> 234.50).
+    Keeps the till and quotes tidy; the exact USD value stays stored."""
+    if value is None:
+        return None
+    return round(float(value) * 2) / 2
+
+
 def usd_to_bob(price_usd, rate):
     if price_usd is None or rate is None:
         return None
-    return round(float(price_usd) * rate, 2)
+    return round_bob(float(price_usd) * rate)
 
 
 # ----------------------------------------------------------------- endpoints

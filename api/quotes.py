@@ -32,7 +32,7 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph
 
 from api.main import app, require, run
-from api.pricing import current_rate, usd_to_bob
+from api.pricing import current_rate, usd_to_bob, round_bob
 
 
 # ------------------------------------------------------------ shop settings
@@ -419,7 +419,7 @@ def create_sale(body: SaleIn, request: Request):
         usd = float(it["price_usd"])
         bob = usd_to_bob(usd, fx["rate"])
         disc = max(0.0, float(line.discount or 0))
-        net_bob = max(0.0, bob - disc)          # per-unit price after discount
+        net_bob = round_bob(max(0.0, bob - disc))   # per-unit price after discount, to 0.50
         run("""INSERT INTO quote_line (quote_id, line_no, item_id, part_code,
                      description, side, qty, price_usd, price_bob, discount_bob)
                  VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",

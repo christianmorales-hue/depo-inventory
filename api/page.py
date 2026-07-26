@@ -40,7 +40,12 @@ PAGE = r"""
 
  input,select,button{font:inherit;color:inherit}
  input,select{padding:9px 11px;border:1px solid var(--line);border-radius:8px;
-              background:var(--card)}
+              background:var(--card);color:var(--ink)}
+ /* Remove the native up/down spinners on number inputs - they don't theme
+    and they overlap labels. Typing still works. */
+ input[type=number]{-moz-appearance:textfield;appearance:textfield}
+ input[type=number]::-webkit-outer-spin-button,
+ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
  input:focus,select:focus,button:focus-visible{outline:2px solid var(--focus);
               outline-offset:1px}
  #q{width:100%;padding:15px 17px;font-size:19px;border-width:2px;border-radius:10px}
@@ -1110,9 +1115,10 @@ function drawNCart(){
     $('#ntotal').textContent = '';
     return;
   }
+  const r050 = n => Math.round(n * 2) / 2;
   box.innerHTML = ncart.map((c,i) => {
     const disc = c.discount || 0;
-    const lineTotal = Math.max(0, (c.price_bob - disc)) * c.qty;
+    const lineTotal = r050(Math.max(0, (c.price_bob - disc))) * c.qty;
     return `
     <div class="card"><div class="bar">
       <div class="side ${c.side?'':'no'}" style="width:44px">${c.side||'—'}</div>
@@ -1147,8 +1153,9 @@ function drawNCart(){
   ntotal();
 }
 function ntotal(){
+  const r050 = n => Math.round(n * 2) / 2;
   const t = ncart.reduce((a,c) =>
-    a + Math.max(0, (c.price_bob - (c.discount||0))) * c.qty, 0);
+    a + r050(Math.max(0, (c.price_bob - (c.discount||0)))) * c.qty, 0);
   $('#ntotal').innerHTML = `<b>Total: Bs ${t.toFixed(2)}</b>`;
 }
 
