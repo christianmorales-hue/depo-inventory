@@ -289,9 +289,15 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     c.setFont("Helvetica-Oblique", 9)
     c.setFillColor(colors.HexColor("#6B757C"))
     if is_nota:
-        c.drawString(M, 25 * mm, "Nota de venta - documento no fiscal.")
-        c.drawString(M, 20 * mm,
+        c.drawString(M, 30 * mm, "Nota de venta - documento no fiscal.")
+        c.drawString(M, 25 * mm,
                      "Los productos han salido del inventario en la sucursal correspondiente.")
+        # Cancellation policy, split across two lines to fit the page width.
+        c.drawString(M, 20 * mm,
+                     "La gerencia se reserva el derecho a aceptar o rechazar la anulación "
+                     "de la orden de venta.")
+        c.drawString(M, 16 * mm,
+                     "La solicitud debe ser realizada en un plazo de 24 h.")
     else:
         c.drawString(M, 25 * mm,
                      f"Cotización válida por {q['valid_days']} días desde la fecha de emisión.")
@@ -341,6 +347,7 @@ class SaleLine(BaseModel):
     item_id: int
     branch_id: int
     qty: int
+    discount: float = 0        # Bs off per unit, optional
 
 
 class SaleIn(BaseModel):
@@ -411,34 +418,80 @@ def create_sale(body: SaleIn, request: Request):
         it = items[line.item_id]
         usd = float(it["price_usd"])
         bob = usd_to_bob(usd, fx["rate"])
+        disc = max(0.0, float(line.discount or 0))
+        net_bob = max(0.0, bob - disc)          # per-unit price after discount
         run("""INSERT INTO quote_line (quote_id, line_no, item_id, part_code,
-                     description, side, qty, price_usd, price_bob)
-                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     description, side, qty, price_usd, price_bob, discount_bob)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (q["quote_id"], i, line.item_id, it["part_code"], it["description"],
-             it["side"], line.qty, usd, bob))
-        # Record the sale in the ledger, freezing price and rate at sale time.
+             it["side"], line.qty, usd, net_bob, disc))
+        # Record the sale in the ledger at the net (discounted) boliviano price,
+        # so revenue reports reflect what the customer actually paid.
         run("""INSERT INTO stock_movement (item_id, branch_id, qty_delta, reason,
                      price_usd, fx_rate, unit_price, note, created_by)
                  VALUES (%s, %s, %s, 'sale', %s, %s, %s, %s, %s)""",
-            (line.item_id, line.branch_id, -line.qty, usd, fx["rate"], bob,
+            (line.item_id, line.branch_id, -line.qty, usd, fx["rate"], net_bob,
              f"nota de venta #{q['quote_number']}", user["name"]))
 
     return {"sale_id": q["quote_id"], "sale_number": q["quote_number"]}
 
 
+@app.post("/api/sales/{sale_id}/cancel")
+def cancel_sale(sale_id: int, request: Request):
+    """Cancel a nota de venta: reverse every stock movement so inventory is
+    restored, and stamp the nota as cancelled. Reports self-correct because
+    the reversing movements net the sale to zero."""
+    user = require(request)
+    q = run("SELECT quote_number, cancelled_at FROM quote WHERE quote_id = %s "
+            "AND note LIKE '%%[NOTA_DE_VENTA]%%'", (sale_id,))
+    if not q:
+        raise HTTPException(404, "Nota de venta no encontrada.")
+    if q[0]["cancelled_at"]:
+        raise HTTPException(400, "Esta nota ya fue anulada.")
+
+    number = q[0]["quote_number"]
+    lines = run("""SELECT item_id, qty, price_usd, price_bob
+                   FROM quote_line WHERE quote_id = %s""", (sale_id,))
+    # Find the branch each original sale movement came from, to return stock
+    # to the right place.
+    for ln in lines:
+        mv = run("""SELECT branch_id, fx_rate FROM stock_movement
+                    WHERE item_id = %s AND reason = 'sale'
+                      AND note = %s ORDER BY movement_id LIMIT 1""",
+                 (ln["item_id"], f"nota de venta #{number}"))
+        branch_id = mv[0]["branch_id"] if mv else None
+        fx_rate = mv[0]["fx_rate"] if mv else None
+        if branch_id is None:
+            continue
+        # Reverse: put the units back with a positive movement, reason 'sale'
+        # so it cancels the original in every sales view.
+        run("""INSERT INTO stock_movement (item_id, branch_id, qty_delta, reason,
+                     price_usd, fx_rate, unit_price, note, created_by)
+                 VALUES (%s, %s, %s, 'sale', %s, %s, %s, %s, %s)""",
+            (ln["item_id"], branch_id, ln["qty"], ln["price_usd"], fx_rate,
+             ln["price_bob"], f"anulación nota #{number}", user["name"]))
+
+    run("UPDATE quote SET cancelled_at = now(), cancelled_by = %s "
+        "WHERE quote_id = %s", (user["name"], sale_id))
+    return {"ok": True, "sale_number": number}
+
+
 @app.get("/api/sales")
 def list_sales(request: Request):
     require(request)
-    rows = run("""SELECT * FROM v_quotes
-                  WHERE quote_id IN (SELECT quote_id FROM quote
-                                     WHERE note LIKE '%%[NOTA_DE_VENTA]%%')
+    rows = run("""SELECT v.*, q.cancelled_at, q.cancelled_by
+                  FROM v_quotes v
+                  JOIN quote q USING (quote_id)
+                  WHERE q.note LIKE '%%[NOTA_DE_VENTA]%%'
+                  ORDER BY v.quote_number DESC
                   LIMIT 100""")
     for r in rows:
-        for k, v in r.items():
+        for k, v in list(r.items()):
             if hasattr(v, "isoformat"):
                 r[k] = v.isoformat()[:10] if k == "fecha" else v.isoformat()
             elif v is not None and type(v).__name__ == "Decimal":
                 r[k] = float(v)
+        r["cancelled"] = r.get("cancelled_at") is not None
     return rows
 
 

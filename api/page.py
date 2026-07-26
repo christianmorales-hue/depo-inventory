@@ -382,8 +382,6 @@ const VIEWS = [['buscar','Buscar'],['vehiculo','Por vehículo'],
                ['caja','Caja'],['reportes','Reportes']];
 
 const REASONS = [
-  ['purchase',      1, 'Ingreso (compra)'],
-  ['sale',         -1, 'Venta'],
   ['defect',       -1, 'Baja por defecto'],
   ['adjustment',    1, 'Corrección: sumar'],
   ['adjustment',   -1, 'Corrección: restar'],
@@ -460,7 +458,7 @@ async function loadSide(){
 }
 
 function cols(){
-  return `44px 44px minmax(0,1fr) 92px ${branches.map(() => '84px').join(' ')}`;
+  return `44px minmax(0,1fr) 92px ${branches.map(() => '84px').join(' ')}`;
 }
 
 // ------------------------------------------------------------------- shell
@@ -575,7 +573,7 @@ function draw(){
   const heads = $('#heads'), out = $('#results');
   heads.hidden = rows.length === 0;
   heads.style.gridTemplateColumns = cols();
-  heads.innerHTML = `<b>Foto</b><b>Lado</b><b>Producto</b><b>Precio</b>` +
+  heads.innerHTML = `<b>Lado</b><b>Producto</b><b>Precio</b>` +
     branches.map(b => `<b>${esc(b.name)}</b>`).join('');
 
   if (!rows.length) {
@@ -591,9 +589,6 @@ function draw(){
     btn.style.gridTemplateColumns = cols();
     const lonely = branches.some(b => pairs.has(r.item_id + ':' + b.branch_id));
     btn.innerHTML =
-      (r.photo_path
-        ? `<img class="thumb" src="/media/${esc(r.photo_path)}" alt="">`
-        : `<div class="thumb ph">sin<br>foto</div>`) +
       `<div class="side ${r.side ? '' : 'no'}">${r.side || '—'}</div>
        <div><div class="desc">${esc(r.description)}` +
          (lonely ? '<span class="flag">falta el par</span>' : '') + `</div>
@@ -655,7 +650,6 @@ function panel(r){
     <div class="bar">
       <button class="wa" id="waC">WhatsApp a cliente</button>
       <button class="wa" id="waS">WhatsApp interno</button>
-      <label class="sub">Foto: <input type="file" id="ph" accept="image/*"></label>
     </div>
 
     <h4>Registrar movimiento</h4>
@@ -695,14 +689,6 @@ function panel(r){
     window.open('https://wa.me/?text=' + encodeURIComponent(waClient), '_blank');
   p.querySelector('#waS').onclick = () =>
     window.open('https://wa.me/?text=' + encodeURIComponent(waStaff), '_blank');
-
-  p.querySelector('#ph').onchange = async e => {
-    const f = e.target.files[0]; if (!f) return;
-    const fd = new FormData(); fd.append('file', f);
-    const res = await fetch('/api/items/' + r.item_id + '/photo',
-                            {method:'POST', body: fd});
-    if (res.ok) refresh();
-  };
 
   const say = (sel, ok, text) => {
     const m = p.querySelector(sel);
@@ -1124,22 +1110,32 @@ function drawNCart(){
     $('#ntotal').textContent = '';
     return;
   }
-  box.innerHTML = ncart.map((c,i) => `
+  box.innerHTML = ncart.map((c,i) => {
+    const disc = c.discount || 0;
+    const lineTotal = Math.max(0, (c.price_bob - disc)) * c.qty;
+    return `
     <div class="card"><div class="bar">
       <div class="side ${c.side?'':'no'}" style="width:44px">${c.side||'—'}</div>
-      <div style="flex:1;min-width:180px">
+      <div style="flex:1;min-width:160px">
         <div class="desc">${esc(c.description)}</div>
         <div class="code">${esc(c.part_code||'')} · Bs ${c.price_bob}</div></div>
       <select data-b="${i}">${branches.map(b =>
         `<option value="${b.branch_id}"${b.branch_id === c.branch_id
           ? ' selected' : ''}>${esc(b.name)} (${stockAt(c, b.branch_id)})</option>`
         ).join('')}</select>
-      <input type="number" min="1" value="${c.qty}" data-q="${i}" style="width:70px">
-      <span class="sub">Bs ${(c.price_bob*c.qty).toFixed(2)}</span>
+      <label class="sub">Desc. Bs <input type="number" min="0" step="0.01"
+        value="${disc || ''}" placeholder="0" data-disc="${i}" style="width:74px"></label>
+      <input type="number" min="1" value="${c.qty}" data-q="${i}" style="width:64px">
+      <span class="sub">Bs ${lineTotal.toFixed(2)}</span>
       <button class="danger" data-rm="${i}">Quitar</button>
-    </div></div>`).join('');
+    </div></div>`;
+  }).join('');
   box.querySelectorAll('[data-q]').forEach(inp => inp.oninput = () => {
     ncart[+inp.dataset.q].qty = Math.max(1, parseInt(inp.value,10) || 1);
+    drawNCart();
+  });
+  box.querySelectorAll('[data-disc]').forEach(inp => inp.oninput = () => {
+    ncart[+inp.dataset.disc].discount = Math.max(0, parseFloat(inp.value) || 0);
     ntotal();
   });
   box.querySelectorAll('[data-b]').forEach(sel => sel.onchange = () => {
@@ -1151,7 +1147,8 @@ function drawNCart(){
   ntotal();
 }
 function ntotal(){
-  const t = ncart.reduce((a,c) => a + c.price_bob * c.qty, 0);
+  const t = ncart.reduce((a,c) =>
+    a + Math.max(0, (c.price_bob - (c.discount||0))) * c.qty, 0);
   $('#ntotal').innerHTML = `<b>Total: Bs ${t.toFixed(2)}</b>`;
 }
 
@@ -1159,9 +1156,10 @@ async function loadSales(){
   const box = $('#nlist');
   const list = await api('/api/sales');
   box.innerHTML = list.length ? list.slice(0,15).map(q => `
-    <div class="card"><div class="bar">
+    <div class="card${q.cancelled?' off':''}"><div class="bar">
       <div style="flex:1;min-width:180px">
-        <div class="desc">Nota Nº ${q.quote_number} · ${esc(q.customer)}</div>
+        <div class="desc">Nota Nº ${q.quote_number} · ${esc(q.customer)}${
+          q.cancelled?' <span class="flag">ANULADA</span>':''}</div>
         <div class="code">${q.fecha} · ${q.lineas} productos · Bs ${
           (q.total_bob||0).toFixed(2)}</div>
       </div>
@@ -1169,12 +1167,24 @@ async function loadSales(){
       <button class="wa" data-nwa='${JSON.stringify(
         {sale_id:q.quote_id, phone:q.customer_phone||'',
          customer:q.customer, number:q.quote_number}).replace(/'/g,"&#39;")}'>WhatsApp</button>
+      ${q.cancelled ? '' :
+        `<button class="danger" data-cancel="${q.quote_id}"
+          data-num="${q.quote_number}">Anular</button>`}
     </div></div>`).join('') : '<p class="empty">Aún no hay notas de venta.</p>';
   box.querySelectorAll('[data-npdf]').forEach(b => b.onclick = () =>
     downloadSalePdf(+b.dataset.npdf));
   box.querySelectorAll('[data-nwa]').forEach(b => b.onclick = () => {
     const d = JSON.parse(b.dataset.nwa.replace(/&#39;/g,"'"));
     sendWaSale(d);
+  });
+  box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = async () => {
+    if (!confirm(`¿Anular la nota Nº ${b.dataset.num}? Los productos volverán al `
+      + `inventario y la venta dejará de contar en los reportes.`)) return;
+    try {
+      await api('/api/sales/' + b.dataset.cancel + '/cancel', {method:'POST'});
+      loadSales();
+      if (view === 'buscar') refresh();
+    } catch (e) { alert(e.message); }
   });
 }
 
@@ -1223,7 +1233,7 @@ $('#ngo2').onclick = async () => {
       customer: $('#nn').value, customer_nit: $('#nni').value || null,
       customer_phone: $('#nph').value || null,
       lines: ncart.map(c => ({item_id: c.item_id, branch_id: c.branch_id,
-                              qty: c.qty}))})});
+                              qty: c.qty, discount: c.discount || 0}))})});
     m.className = 'msg good';
     m.textContent = `Nota Nº ${r.sale_number} registrada. Stock actualizado.`;
     await sendWaSale({sale_id: r.sale_id, phone: $('#nph').value,
