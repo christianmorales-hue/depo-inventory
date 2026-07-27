@@ -242,6 +242,11 @@ PAGE = r"""
     <h3>Nueva nota de venta</h3>
     <p class="hint">Cada línea descuenta stock de la sucursal elegida al generarse.</p>
     <div class="bar">
+      <button id="nfromquote">Importar de cotización</button>
+      <span class="sub" id="nfromquote-msg"></span>
+    </div>
+    <div id="nquote-picker" class="list" style="margin-top:8px" hidden></div>
+    <div class="bar" style="margin-top:12px">
       <input id="nq" placeholder="Buscar producto para agregar…"
              style="flex:1;min-width:220px">
     </div>
@@ -1145,6 +1150,65 @@ $('#cgo').onclick = async () => {
 // -------------------------------------------------------- nota de venta
 let ncart = [];  // {item_id, description, side, part_code, price_bob, qty, branch_id}
 
+// ------------------------------------------------ import cotización -> nota
+async function toggleQuotePicker(){
+  const picker = document.getElementById('nquote-picker');
+  if (!picker.hidden) { picker.hidden = true; return; }
+  const msg = document.getElementById('nfromquote-msg');
+  msg.textContent = 'Cargando cotizaciones…';
+  let list = [];
+  try { list = await api('/api/quotes'); } catch (e) {}
+  msg.textContent = '';
+  if (!list.length) {
+    picker.hidden = false;
+    picker.innerHTML = '<p class="empty">No hay cotizaciones para importar.</p>';
+    return;
+  }
+  picker.hidden = false;
+  picker.innerHTML = list.slice(0, 15).map(q => `
+    <div class="card"><div class="bar">
+      <div style="flex:1;min-width:180px">
+        <div class="desc">Cotización Nº ${q.quote_number} · ${esc(q.customer)}</div>
+        <div class="code">${q.fecha} · ${q.lineas} productos · Bs ${
+          (q.total_bob||0).toFixed(2)}</div>
+      </div>
+      <button class="primary" data-import="${q.quote_id}">Usar esta</button>
+    </div></div>`).join('');
+  picker.querySelectorAll('[data-import]').forEach(b => b.onclick = () =>
+    importQuoteIntoNota(+b.dataset.import));
+}
+
+async function importQuoteIntoNota(quote_id){
+  let data;
+  try { data = await api('/api/quotes/' + quote_id); }
+  catch (e) { alert('No se pudo cargar la cotización: ' + e.message); return; }
+
+  // Build the nota cart from the quote's lines, refetching each item for its
+  // current stock so branch selection and stock warnings work correctly.
+  const arr = [];
+  for (const ln of data.lines) {
+    let fresh = null;
+    try { fresh = await api('/api/items/' + ln.item_id); } catch (e) {}
+    const stock = fresh ? fresh.stock : [];
+    const first = branches.find(br =>
+      ((stock.find(s => s.branch_id === br.branch_id) || {}).qty || 0) > 0);
+    arr.push({
+      item_id: ln.item_id, description: ln.description, side: ln.side,
+      part_code: ln.part_code, price_bob: ln.price_bob, qty: ln.qty,
+      stock, discount: 0,
+      branch_id: first ? first.branch_id : (branches[0] || {}).branch_id
+    });
+  }
+  ncart = arr;
+  $('#nn').value = data.quote.customer || '';
+  $('#nni').value = data.quote.customer_nit || '';
+  $('#nph').value = data.quote.customer_phone || '';
+  document.getElementById('nquote-picker').hidden = true;
+  document.getElementById('nfromquote-msg').textContent =
+    `Importado de cotización Nº ${data.quote.quote_number}. Revise y genere la nota.`;
+  drawNCart();
+}
+
 async function nsearch(){
   const term = $('#nq').value.trim();
   const box = $('#nsug');
@@ -1327,6 +1391,7 @@ async function sendWaSale(d){
   window.open(url, '_blank');
 }
 
+$('#nfromquote').onclick = toggleQuotePicker;
 $('#nq').addEventListener('input', () => {
   clearTimeout(window.nt); window.nt = setTimeout(nsearch, 220);
 });
