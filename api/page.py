@@ -1004,6 +1004,7 @@ async function loadQuotes(){
         <div class="code">${q.fecha} · ${q.lineas} productos · Bs ${
           (q.total_bob||0).toFixed(2)} · válida hasta ${q.valid_until.slice(0,10)}</div>
       </div>
+      <button data-qver="${q.quote_id}">Ver</button>
       <button data-pdf="${q.quote_id}">PDF</button>
       <button data-qpng="${q.quote_id}">PNG</button>
       <button data-qedit="${q.quote_id}">Editar</button>
@@ -1013,6 +1014,8 @@ async function loadQuotes(){
     </div></div>`).join('') : '<p class="empty">Aún no hay cotizaciones.</p>';
   box.querySelectorAll('[data-pdf]').forEach(b => b.onclick = () =>
     downloadQuotePdf(+b.dataset.pdf));
+  box.querySelectorAll('[data-qver]').forEach(b => b.onclick = () =>
+    showQuoteDetail(+b.dataset.qver));
   box.querySelectorAll('[data-qpng]').forEach(b => b.onclick = () =>
     downloadDoc('/api/quotes/' + b.dataset.qpng + '/png', 'cotizacion.png'));
   box.querySelectorAll('[data-qedit]').forEach(b => b.onclick = () =>
@@ -1082,10 +1085,10 @@ async function editDocumentIntoCart(quote_id, kind, number){
     catch (e) { alert('No se pudo anular la nota original: ' + e.message); return; }
   }
 
-  const arr = [];
-  for (const ln of data.lines) {
-    let fresh = null;
-    try { fresh = await api('/api/items/' + ln.item_id); } catch (e) {}
+  const freshAll = await Promise.all(data.lines.map(ln =>
+    kind === 'nota' ? api('/api/items/' + ln.item_id).catch(() => null)
+                    : Promise.resolve(null)));
+  const arr = data.lines.map((ln, i) => {
     const entry = {
       item_id: ln.item_id,
       description: ln.description,
@@ -1095,14 +1098,14 @@ async function editDocumentIntoCart(quote_id, kind, number){
       qty: ln.qty
     };
     if (kind === 'nota') {
-      entry.stock = fresh ? fresh.stock : [];
+      entry.stock = freshAll[i] ? freshAll[i].stock : [];
       const first = branches.find(br =>
         ((entry.stock.find(s => s.branch_id === br.branch_id) || {}).qty || 0) > 0);
       entry.branch_id = first ? first.branch_id : (branches[0] || {}).branch_id;
       entry.discount = 0;
     }
-    arr.push(entry);
-  }
+    return entry;
+  });
 
   if (kind === 'nota') {
     ncart = arr;
@@ -1204,6 +1207,43 @@ function closeModal(){ $('#modal').hidden = true; $('#modal-body').innerHTML = '
 $('#modal-close').onclick = closeModal;
 $('#modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
 
+async function showQuoteDetail(quote_id){
+  let data;
+  try { data = await api('/api/quotes/' + quote_id); }
+  catch (e) { alert('No se pudo cargar: ' + e.message); return; }
+  const q = data.quote;
+  const r050 = n => Math.round(n * 2) / 2;
+  let total = 0;
+  const rows = data.lines.map(ln => {
+    const unit = r050(Math.max(0, ln.price_bob));
+    const line = unit * ln.qty;
+    total += line;
+    return `<tr>
+      <td>${esc(ln.part_code || '—')}</td>
+      <td>${esc(ln.brand || '--')}</td>
+      <td>${esc(ln.description)}${ln.side ? ' ('+ln.side+')' : ''}</td>
+      <td class="num">${ln.qty}</td>
+      <td class="num">Bs ${unit.toFixed(2)}</td>
+      <td class="num">Bs ${line.toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+  openModal(`<div class="nota-view">
+    <h2>Cotización Nº ${q.quote_number}</h2>
+    <div class="meta">
+      Fecha: ${(q.created_at||'').slice(0,10)} · TC: ${q.fx_rate} Bs/USD<br>
+      Cliente: ${esc(q.customer || '—')}${
+        q.customer_nit ? ' · NIT: '+esc(q.customer_nit) : ''}${
+        q.customer_phone ? ' · Tel: '+esc(q.customer_phone) : ''}
+    </div>
+    <table>
+      <tr><th>Código</th><th>Marca</th><th>Descripción</th>
+          <th class="num">Cant.</th><th class="num">P.Unit</th><th class="num">Total</th></tr>
+      ${rows}
+    </table>
+    <div class="tot">Total: Bs ${total.toFixed(2)}</div>
+  </div>`);
+}
+
 async function showNotaDetail(quote_id){
   let data;
   try { data = await api('/api/quotes/' + quote_id); }
@@ -1277,23 +1317,24 @@ async function importQuoteIntoNota(quote_id){
   let data;
   try { data = await api('/api/quotes/' + quote_id); }
   catch (e) { alert('No se pudo cargar la cotización: ' + e.message); return; }
+  document.getElementById('nfromquote-msg').textContent = 'Importando…';
 
-  // Build the nota cart from the quote's lines, refetching each item for its
-  // current stock so branch selection and stock warnings work correctly.
-  const arr = [];
-  for (const ln of data.lines) {
-    let fresh = null;
-    try { fresh = await api('/api/items/' + ln.item_id); } catch (e) {}
-    const stock = fresh ? fresh.stock : [];
+  // Fetch every item's current stock in PARALLEL (not one-by-one) so a quote
+  // with several lines imports in one round-trip's time instead of N.
+  const fresh = await Promise.all(data.lines.map(ln =>
+    api('/api/items/' + ln.item_id).catch(() => null)));
+
+  const arr = data.lines.map((ln, i) => {
+    const stock = fresh[i] ? fresh[i].stock : [];
     const first = branches.find(br =>
       ((stock.find(s => s.branch_id === br.branch_id) || {}).qty || 0) > 0);
-    arr.push({
+    return {
       item_id: ln.item_id, description: ln.description, side: ln.side,
       part_code: ln.part_code, price_bob: ln.price_bob, qty: ln.qty,
       stock, discount: 0,
       branch_id: first ? first.branch_id : (branches[0] || {}).branch_id
-    });
-  }
+    };
+  });
   ncart = arr;
   $('#nn').value = data.quote.customer || '';
   $('#nni').value = data.quote.customer_nit || '';
@@ -1530,9 +1571,9 @@ async function openFulfillmentModal(){
     </div>
 
     <div class="ful-pane" data-pane="entrega" hidden>
+      <input id="ful-e-name" placeholder="Nombre de quien recibe">
       <label class="showpw"><input type="checkbox" id="ful-samename" checked>
         Mismo nombre que la nota</label>
-      <input id="ful-e-name" placeholder="Nombre de quien recibe" hidden>
       <label class="sub">Ciudad</label>
       <select id="ful-e-city">${cityOpts}</select>
       <input id="ful-e-address" placeholder="Dirección">
@@ -1542,6 +1583,8 @@ async function openFulfillmentModal(){
 
     <div class="ful-pane" data-pane="envio" hidden>
       <input id="ful-s-name" placeholder="Nombre de quien recibe">
+      <label class="showpw"><input type="checkbox" id="ful-s-samename" checked>
+        Mismo nombre que la nota</label>
       <label class="sub">Ciudad</label>
       <select id="ful-s-city">${cityOpts}</select>
       <label class="sub">Transporte</label>
@@ -1567,10 +1610,20 @@ async function openFulfillmentModal(){
     modal.querySelectorAll('.ful-pane').forEach(p =>
       p.hidden = p.dataset.pane !== method);
   });
-  const sn = modal.querySelector('#ful-samename');
-  if (sn) sn.onchange = () => {
-    modal.querySelector('#ful-e-name').hidden = sn.checked;
+  // When "same name" is checked, prefill the recipient with the nota's
+  // customer name and disable the field (greyed). Unchecking lets them type.
+  const wireSameName = (cbId, inputId) => {
+    const cb = modal.querySelector(cbId);
+    const inp = modal.querySelector(inputId);
+    if (!cb || !inp) return;
+    const sync = () => {
+      if (cb.checked) { inp.value = $('#nn').value; inp.disabled = true; inp.style.opacity = .55; }
+      else { inp.disabled = false; inp.style.opacity = 1; inp.focus(); }
+    };
+    cb.onchange = sync; sync();
   };
+  wireSameName('#ful-samename', '#ful-e-name');
+  wireSameName('#ful-s-samename', '#ful-s-name');
 
   modal.querySelector('#ful-go').onclick = async () => {
     const fm = modal.querySelector('#ful-msg');
@@ -1586,7 +1639,8 @@ async function openFulfillmentModal(){
       ful.address = modal.querySelector('#ful-e-address').value;
       ful.dropoff_date = modal.querySelector('#ful-e-date').value || null;
     } else {
-      ful.recipient = modal.querySelector('#ful-s-name').value;
+      const same = modal.querySelector('#ful-s-samename').checked;
+      ful.recipient = same ? $('#nn').value : modal.querySelector('#ful-s-name').value;
       ful.city = modal.querySelector('#ful-s-city').value;
       ful.transport = modal.querySelector('#ful-s-transport').value;
       ful.company = modal.querySelector('#ful-s-company').value;
