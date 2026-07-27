@@ -152,7 +152,10 @@ def bs(n):
 def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     """doc_type: 'cotizacion' or 'nota' - only changes the title and footer."""
     q = run("SELECT * FROM quote WHERE quote_id = %s", (quote_id,))[0]
-    lines = run("SELECT * FROM quote_line WHERE quote_id = %s ORDER BY line_no",
+    lines = run("""SELECT ql.*, i.make AS brand
+                   FROM quote_line ql
+                   LEFT JOIN item i ON i.item_id = ql.item_id
+                   WHERE ql.quote_id = %s ORDER BY ql.line_no""",
                 (quote_id,))
 
     def as_float(d, keys):
@@ -191,8 +194,8 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     if shop["phone"]:
         c.drawRightString(x_r, y - 11 * mm, f"Tel: {shop['phone']}")
 
-    # ---- big centered title --------------------------------------------
-    y -= 30 * mm
+    # ---- big centered title (closer to the header) ---------------------
+    y -= 20 * mm
     c.setFont("Helvetica-Bold", 26)
     c.drawCentredString(W / 2, y, title)
     y -= 7 * mm
@@ -230,7 +233,8 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     y = y - 30 * mm
     # columns: code | description | unit price | qty | total
     # code gets a fixed left column; description takes the remaining space.
-    col = [M, M + 30 * mm, W - M - 82 * mm, W - M - 52 * mm, W - M - 25 * mm, W - M]
+    col = [M, M + 26 * mm, M + 50 * mm, W - M - 82 * mm,
+           W - M - 52 * mm, W - M - 25 * mm, W - M]
     header_h = 7 * mm
 
     c.setFillColor(colors.HexColor("#14181B"))
@@ -238,27 +242,29 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Bold", 9)
     c.drawString(col[0] + 2 * mm, y - 5 * mm, "CÓDIGO")
-    c.drawString(col[1] + 2 * mm, y - 5 * mm, "DESCRIPCIÓN")
-    c.drawRightString(col[3] - 2 * mm, y - 5 * mm, "P. UNIT. (Bs)")
-    c.drawRightString(col[4] - 2 * mm, y - 5 * mm, "CANT.")
-    c.drawRightString(col[5] - 2 * mm, y - 5 * mm, "TOTAL (Bs)")
+    c.drawString(col[1] + 2 * mm, y - 5 * mm, "MARCA")
+    c.drawString(col[2] + 2 * mm, y - 5 * mm, "DESCRIPCIÓN")
+    c.drawRightString(col[4] - 2 * mm, y - 5 * mm, "P. UNIT. (Bs)")
+    c.drawRightString(col[5] - 2 * mm, y - 5 * mm, "CANT.")
+    c.drawRightString(col[6] - 2 * mm, y - 5 * mm, "TOTAL (Bs)")
     c.setFillColor(colors.black)
 
     y -= header_h
     body_style = ParagraphStyle("body", fontName="Helvetica", fontSize=9,
                                 leading=11)
-    code_style = ParagraphStyle("code", fontName="Helvetica", fontSize=8,
-                                leading=10)
+    small_style = ParagraphStyle("small", fontName="Helvetica", fontSize=8,
+                                 leading=10)
     subtotal = 0.0
     for i, line in enumerate(lines):
         desc = line["description"] + (f" ({line['side']})" if line["side"] else "")
         para = Paragraph(desc, body_style)
-        w_desc = col[2] - col[1] - 4 * mm
+        w_desc = col[3] - col[2] - 4 * mm
         _, h = para.wrap(w_desc, 40 * mm)
-        code_para = Paragraph(line.get("part_code") or "—", code_style)
-        w_code = col[1] - col[0] - 4 * mm
-        _, ch = code_para.wrap(w_code, 40 * mm)
-        row_h = max(7 * mm, h + 3 * mm, ch + 3 * mm)
+        code_para = Paragraph(line.get("part_code") or "—", small_style)
+        _, ch = code_para.wrap(col[1] - col[0] - 4 * mm, 40 * mm)
+        brand_para = Paragraph(line.get("brand") or "--", small_style)
+        _, bh = brand_para.wrap(col[2] - col[1] - 4 * mm, 40 * mm)
+        row_h = max(7 * mm, h + 3 * mm, ch + 3 * mm, bh + 3 * mm)
 
         if i % 2 == 1:
             c.setFillColor(colors.HexColor("#F8FAFB"))
@@ -267,12 +273,13 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
 
         c.setFont("Helvetica", 9)
         code_para.drawOn(c, col[0] + 2 * mm, y - row_h + (row_h - ch) / 2)
-        para.drawOn(c, col[1] + 2 * mm, y - row_h + (row_h - h) / 2)
-        c.drawRightString(col[3] - 2 * mm, y - 5 * mm, bs(line["price_bob"]))
-        c.drawRightString(col[4] - 2 * mm, y - 5 * mm, str(line["qty"]))
+        brand_para.drawOn(c, col[1] + 2 * mm, y - row_h + (row_h - bh) / 2)
+        para.drawOn(c, col[2] + 2 * mm, y - row_h + (row_h - h) / 2)
+        c.drawRightString(col[4] - 2 * mm, y - 5 * mm, bs(line["price_bob"]))
+        c.drawRightString(col[5] - 2 * mm, y - 5 * mm, str(line["qty"]))
         total = line["price_bob"] * line["qty"]
         subtotal += total
-        c.drawRightString(col[5] - 2 * mm, y - 5 * mm, bs(total))
+        c.drawRightString(col[6] - 2 * mm, y - 5 * mm, bs(total))
         y -= row_h
 
         if y < 55 * mm:
@@ -317,6 +324,54 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+def build_png(quote_id: int, doc_type: str = "cotizacion") -> bytes:
+    """Render the document PDF to a single PNG image, for customers who can't
+    open PDFs (e.g. viewing on some phones)."""
+    import fitz  # PyMuPDF, pure-pip, no system dependency
+    pdf = build_pdf(quote_id, doc_type)
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    page = doc.load_page(0)
+    # 2x zoom for a crisp image
+    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+    png = pix.tobytes("png")
+    doc.close()
+    return png
+
+
+@app.get("/api/quotes/{quote_id}/png")
+def download_quote_png(quote_id: int, request: Request):
+    require(request)
+    q = run("SELECT quote_number, customer FROM quote WHERE quote_id = %s",
+            (quote_id,))
+    if not q:
+        raise HTTPException(404, "Cotización no encontrada.")
+    png = build_png(quote_id, "cotizacion")
+    import re
+    n = q[0]["quote_number"]
+    slug = re.sub(r"[^A-Za-z0-9]+", "_",
+                  q[0]["customer"] or "").strip("_").lower()[:40] or "cliente"
+    return Response(png, media_type="image/png",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="cotizacion_{n:04d}_{slug}.png"'})
+
+
+@app.get("/api/sales/{sale_id}/png")
+def download_sale_png(sale_id: int, request: Request):
+    require(request)
+    q = run("SELECT quote_number, customer FROM quote WHERE quote_id = %s",
+            (sale_id,))
+    if not q:
+        raise HTTPException(404, "Nota de venta no encontrada.")
+    png = build_png(sale_id, "nota")
+    import re
+    n = q[0]["quote_number"]
+    slug = re.sub(r"[^A-Za-z0-9]+", "_",
+                  q[0]["customer"] or "").strip("_").lower()[:40] or "cliente"
+    return Response(png, media_type="image/png",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="nota_{n:04d}_{slug}.png"'})
 
 
 @app.get("/api/quotes/{quote_id}/pdf")

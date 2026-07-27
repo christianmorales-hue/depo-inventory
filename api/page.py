@@ -954,13 +954,19 @@ async function loadQuotes(){
         <div class="code">${q.fecha} · ${q.lineas} productos · Bs ${
           (q.total_bob||0).toFixed(2)} · válida hasta ${q.valid_until.slice(0,10)}</div>
       </div>
-      <button data-pdf="${q.quote_id}">Descargar PDF</button>
+      <button data-pdf="${q.quote_id}">PDF</button>
+      <button data-qpng="${q.quote_id}">PNG</button>
+      <button data-qedit="${q.quote_id}">Editar</button>
       <button class="wa" data-wa='${JSON.stringify(
         {quote_id:q.quote_id, phone:q.customer_phone||'', customer:q.customer,
          number:q.quote_number, days:q.valid_days}).replace(/'/g,"&#39;")}'>WhatsApp</button>
     </div></div>`).join('') : '<p class="empty">Aún no hay cotizaciones.</p>';
   box.querySelectorAll('[data-pdf]').forEach(b => b.onclick = () =>
     downloadQuotePdf(+b.dataset.pdf));
+  box.querySelectorAll('[data-qpng]').forEach(b => b.onclick = () =>
+    downloadDoc('/api/quotes/' + b.dataset.qpng + '/png', 'cotizacion.png'));
+  box.querySelectorAll('[data-qedit]').forEach(b => b.onclick = () =>
+    editDocumentIntoCart(+b.dataset.qedit, 'cotizacion'));
   box.querySelectorAll('[data-wa]').forEach(b => b.onclick = () => {
     const d = JSON.parse(b.dataset.wa.replace(/&#39;/g,"'"));
     sendWaQuote(d);
@@ -988,6 +994,85 @@ async function downloadQuotePdf(quote_id){
     document.body.appendChild(link); link.click(); link.remove();
     URL.revokeObjectURL(url);
   } catch (e) { alert('Error de red: ' + e.message); }
+}
+
+async function downloadDoc(url, fallbackName){
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert('No se pudo generar el archivo: ' + (err.detail || res.status));
+      return;
+    }
+    const blob = await res.blob();
+    if (blob.size < 300) { alert('El archivo salió vacío.'); return; }
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="?([^"]+)"?/);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = m ? m[1] : fallbackName;
+    document.body.appendChild(link); link.click(); link.remove();
+    URL.revokeObjectURL(link.href);
+  } catch (e) { alert('Error de red: ' + e.message); }
+}
+
+async function editDocumentIntoCart(quote_id, kind, number){
+  // Load a past document's items back into the matching cart so the user can
+  // adjust it and generate a fresh one. For a nota (which already moved stock)
+  // we anular the original first, so inventory stays correct and there's no
+  // double count - the edit becomes "cancel old + build new".
+  let data;
+  try { data = await api('/api/quotes/' + quote_id); }
+  catch (e) { alert('No se pudo cargar el documento: ' + e.message); return; }
+
+  if (kind === 'nota') {
+    if (!confirm(`Editar la nota Nº ${number} anulará la original (los productos `
+      + `vuelven al inventario) y abrirá una nueva para modificar. ¿Continuar?`)) return;
+    try { await api('/api/sales/' + quote_id + '/cancel', {method:'POST'}); }
+    catch (e) { alert('No se pudo anular la nota original: ' + e.message); return; }
+  }
+
+  const arr = [];
+  for (const ln of data.lines) {
+    let fresh = null;
+    try { fresh = await api('/api/items/' + ln.item_id); } catch (e) {}
+    const entry = {
+      item_id: ln.item_id,
+      description: ln.description,
+      side: ln.side,
+      part_code: ln.part_code,
+      price_bob: ln.price_bob,
+      qty: ln.qty
+    };
+    if (kind === 'nota') {
+      entry.stock = fresh ? fresh.stock : [];
+      const first = branches.find(br =>
+        ((entry.stock.find(s => s.branch_id === br.branch_id) || {}).qty || 0) > 0);
+      entry.branch_id = first ? first.branch_id : (branches[0] || {}).branch_id;
+      entry.discount = 0;
+    }
+    arr.push(entry);
+  }
+
+  if (kind === 'nota') {
+    ncart = arr;
+    $('#nn').value = data.quote.customer || '';
+    $('#nni').value = data.quote.customer_nit || '';
+    $('#nph').value = data.quote.customer_phone || '';
+    view = 'nota'; drawNav();
+    document.querySelectorAll('section[id^="v-"]').forEach(s => s.hidden = true);
+    $('#v-nota').hidden = false;
+    drawNCart(); loadSales();
+  } else {
+    cart = arr;
+    $('#cn').value = data.quote.customer || '';
+    $('#cni').value = data.quote.customer_nit || '';
+    $('#cph').value = data.quote.customer_phone || '';
+    view = 'cotizacion'; drawNav();
+    document.querySelectorAll('section[id^="v-"]').forEach(s => s.hidden = true);
+    $('#v-cotizacion').hidden = false;
+    drawCart(); loadQuotes();
+  }
 }
 
 async function sendWaQuote(d){
@@ -1178,7 +1263,10 @@ async function loadSales(){
         <div class="code">${q.fecha} · ${q.lineas} productos · Bs ${
           (q.total_bob||0).toFixed(2)}</div>
       </div>
-      <button data-npdf="${q.quote_id}">Descargar PDF</button>
+      <button data-npdf="${q.quote_id}">PDF</button>
+      <button data-npng="${q.quote_id}">PNG</button>
+      ${q.cancelled ? '' :
+        `<button data-nedit="${q.quote_id}" data-num="${q.quote_number}">Editar</button>`}
       <button class="wa" data-nwa='${JSON.stringify(
         {sale_id:q.quote_id, phone:q.customer_phone||'',
          customer:q.customer, number:q.quote_number}).replace(/'/g,"&#39;")}'>WhatsApp</button>
@@ -1188,6 +1276,10 @@ async function loadSales(){
     </div></div>`).join('') : '<p class="empty">Aún no hay notas de venta.</p>';
   box.querySelectorAll('[data-npdf]').forEach(b => b.onclick = () =>
     downloadSalePdf(+b.dataset.npdf));
+  box.querySelectorAll('[data-npng]').forEach(b => b.onclick = () =>
+    downloadDoc('/api/sales/' + b.dataset.npng + '/png', 'nota.png'));
+  box.querySelectorAll('[data-nedit]').forEach(b => b.onclick = () =>
+    editDocumentIntoCart(+b.dataset.nedit, 'nota', +b.dataset.num));
   box.querySelectorAll('[data-nwa]').forEach(b => b.onclick = () => {
     const d = JSON.parse(b.dataset.nwa.replace(/&#39;/g,"'"));
     sendWaSale(d);
