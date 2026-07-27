@@ -1570,31 +1570,49 @@ async function openFulfillmentModal(){
       <select id="ful-branch">${branchOpts}</select>
     </div>
 
-    <div class="ful-pane" data-pane="entrega" hidden>
-      <input id="ful-e-name" placeholder="Nombre de quien recibe">
-      <label class="showpw"><input type="checkbox" id="ful-samename" checked>
-        Mismo nombre que la nota</label>
-      <label class="sub">Ciudad</label>
-      <select id="ful-e-city">${cityOpts}</select>
-      <input id="ful-e-address" placeholder="Dirección">
-      <label class="sub">Fecha de entrega</label>
-      <input id="ful-e-date" type="date">
-    </div>
+<div class="ful-pane" data-pane="entrega" hidden>
+  <input id="ful-e-name" placeholder="Nombre de quien recibe">
 
-    <div class="ful-pane" data-pane="envio" hidden>
-      <input id="ful-s-name" placeholder="Nombre de quien recibe">
-      <label class="showpw"><input type="checkbox" id="ful-s-samename" checked>
-        Mismo nombre que la nota</label>
-      <label class="sub">Ciudad</label>
-      <select id="ful-s-city">${cityOpts}</select>
-      <label class="sub">Transporte</label>
-      <select id="ful-s-transport"><option value="bus">Bus</option>
-        <option value="avion">Avión</option></select>
-      <input id="ful-s-company" placeholder="Nombre de la empresa de transporte">
-      <label class="sub">Pago</label>
-      <select id="ful-s-payment"><option value="pagado">Pagado</option>
-        <option value="por_pagar">Por pagar</option></select>
-    </div>
+  <label class="showpw">
+    <input type="checkbox" id="ful-samename" checked>
+    Mismo nombre que la nota
+  </label>
+
+  <label class="sub">Ciudad</label>
+  <select id="ful-e-city">${cityOpts}</select>
+
+  <input id="ful-e-address" placeholder="Dirección">
+
+  <label class="sub">Fecha de entrega</label>
+  <input id="ful-e-date" type="date">
+</div>
+
+<div class="ful-pane" data-pane="envio" hidden>
+  <input id="ful-s-name" placeholder="Nombre de quien recibe">
+
+  <label class="showpw">
+    <input type="checkbox" id="ful-s-samename" checked>
+    Mismo nombre que la nota
+  </label>
+
+  <label class="sub">Ciudad</label>
+  <select id="ful-s-city">${cityOpts}</select>
+
+  <label class="sub">Transporte</label>
+  <select id="ful-s-transport">
+    <option value="bus">Bus</option>
+    <option value="avion">Avión</option>
+  </select>
+
+  <input id="ful-s-company" placeholder="Nombre de la empresa de transporte">
+
+  <label class="sub">Pago</label>
+  <select id="ful-s-payment">
+    <option value="pagado">Pagado</option>
+    <option value="por_pagar">Por pagar</option>
+  </select>
+</div>
+
 
     <div class="bar" style="margin-top:18px">
       <button class="primary" id="ful-go">Registrar venta y enviar a bodega</button>
