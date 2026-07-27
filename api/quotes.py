@@ -243,7 +243,7 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     y = y - 30 * mm
     # columns: code | description | unit price | qty | total
     # code gets a fixed left column; description takes the remaining space.
-    col = [M, M + 26 * mm, M + 50 * mm, W - M - 82 * mm,
+    col = [M, M + 30 * mm, M + 54 * mm, W - M - 82 * mm,
            W - M - 52 * mm, W - M - 25 * mm, W - M]
     header_h = 7 * mm
 
@@ -264,8 +264,8 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
                                 leading=11)
     small_style = ParagraphStyle("small", fontName="Helvetica", fontSize=8,
                                  leading=10)
-    code_style = ParagraphStyle("codecol", fontName="Helvetica-Bold", fontSize=10,
-                                leading=12)
+    code_style = ParagraphStyle("codecol", fontName="Helvetica-Bold", fontSize=11,
+                                leading=13)
     subtotal = 0.0
     for i, line in enumerate(lines):
         desc = line["description"] + (f" ({line['side']})" if line["side"] else "")
