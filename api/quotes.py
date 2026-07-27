@@ -226,32 +226,39 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     if bits:
         c.drawString(M + 3 * mm, y - 17 * mm, "   ".join(bits))
 
-    # ---- lines table (no CÓDIGO column) ---------------------------------
+    # ---- lines table (with CÓDIGO column) -------------------------------
     y = y - 30 * mm
-    # columns: description | unit price | qty | total
-    col = [M, W - M - 82 * mm, W - M - 52 * mm, W - M - 25 * mm, W - M]
+    # columns: code | description | unit price | qty | total
+    # code gets a fixed left column; description takes the remaining space.
+    col = [M, M + 30 * mm, W - M - 82 * mm, W - M - 52 * mm, W - M - 25 * mm, W - M]
     header_h = 7 * mm
 
     c.setFillColor(colors.HexColor("#14181B"))
     c.rect(M, y - header_h, W - 2 * M, header_h, stroke=0, fill=1)
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(col[0] + 2 * mm, y - 5 * mm, "DESCRIPCIÓN")
-    c.drawRightString(col[2] - 2 * mm, y - 5 * mm, "P. UNIT. (Bs)")
-    c.drawRightString(col[3] - 2 * mm, y - 5 * mm, "CANT.")
-    c.drawRightString(col[4] - 2 * mm, y - 5 * mm, "TOTAL (Bs)")
+    c.drawString(col[0] + 2 * mm, y - 5 * mm, "CÓDIGO")
+    c.drawString(col[1] + 2 * mm, y - 5 * mm, "DESCRIPCIÓN")
+    c.drawRightString(col[3] - 2 * mm, y - 5 * mm, "P. UNIT. (Bs)")
+    c.drawRightString(col[4] - 2 * mm, y - 5 * mm, "CANT.")
+    c.drawRightString(col[5] - 2 * mm, y - 5 * mm, "TOTAL (Bs)")
     c.setFillColor(colors.black)
 
     y -= header_h
     body_style = ParagraphStyle("body", fontName="Helvetica", fontSize=9,
                                 leading=11)
+    code_style = ParagraphStyle("code", fontName="Helvetica", fontSize=8,
+                                leading=10)
     subtotal = 0.0
     for i, line in enumerate(lines):
         desc = line["description"] + (f" ({line['side']})" if line["side"] else "")
         para = Paragraph(desc, body_style)
-        w_desc = col[1] - col[0] - 4 * mm
+        w_desc = col[2] - col[1] - 4 * mm
         _, h = para.wrap(w_desc, 40 * mm)
-        row_h = max(7 * mm, h + 3 * mm)
+        code_para = Paragraph(line.get("part_code") or "—", code_style)
+        w_code = col[1] - col[0] - 4 * mm
+        _, ch = code_para.wrap(w_code, 40 * mm)
+        row_h = max(7 * mm, h + 3 * mm, ch + 3 * mm)
 
         if i % 2 == 1:
             c.setFillColor(colors.HexColor("#F8FAFB"))
@@ -259,12 +266,13 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
             c.setFillColor(colors.black)
 
         c.setFont("Helvetica", 9)
-        para.drawOn(c, col[0] + 2 * mm, y - row_h + (row_h - h) / 2)
-        c.drawRightString(col[2] - 2 * mm, y - 5 * mm, bs(line["price_bob"]))
-        c.drawRightString(col[3] - 2 * mm, y - 5 * mm, str(line["qty"]))
+        code_para.drawOn(c, col[0] + 2 * mm, y - row_h + (row_h - ch) / 2)
+        para.drawOn(c, col[1] + 2 * mm, y - row_h + (row_h - h) / 2)
+        c.drawRightString(col[3] - 2 * mm, y - 5 * mm, bs(line["price_bob"]))
+        c.drawRightString(col[4] - 2 * mm, y - 5 * mm, str(line["qty"]))
         total = line["price_bob"] * line["qty"]
         subtotal += total
-        c.drawRightString(col[4] - 2 * mm, y - 5 * mm, bs(total))
+        c.drawRightString(col[5] - 2 * mm, y - 5 * mm, bs(total))
         y -= row_h
 
         if y < 55 * mm:

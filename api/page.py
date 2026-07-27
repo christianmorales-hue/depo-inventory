@@ -898,6 +898,10 @@ async function csearch(){
     if (fresh.price_bob == null || fresh.price_bob === 0) {
       if (!confirm('Este producto no tiene precio configurado. ¿Agregar igual?')) return;
     }
+    const totalStock = (fresh.stock || []).reduce((a, s) => a + (s.qty || 0), 0);
+    if (totalStock <= 0) {
+      if (!confirm('Este producto no tiene stock. ¿Agregar igual?')) return;
+    }
     const existing = cart.find(c => c.item_id === fresh.item_id);
     if (existing) existing.qty += 1;
     else cart.push({
@@ -1086,6 +1090,10 @@ async function nsearch(){
     }
     if (fresh.price_bob == null || fresh.price_bob === 0) {
       if (!confirm('Este producto no tiene precio configurado. ¿Agregar igual?')) return;
+    }
+    const totalStock = (fresh.stock || []).reduce((a, s) => a + (s.qty || 0), 0);
+    if (totalStock <= 0) {
+      if (!confirm('Este producto no tiene stock. ¿Agregar igual?')) return;
     }
     const first = branches.find(br =>
       (fresh.stock.find(s => s.branch_id === br.branch_id) || {}).qty > 0);
