@@ -17,6 +17,7 @@ PAGE = r"""
        --muted:#9BA0B4;--line:#44475A;--have:#50FA7B;--none:#6272A4;
        --amber:#FFB86C;--focus:#BD93F9;--warn:#FF5555;}
  *{box-sizing:border-box}
+ [hidden]{display:none !important}
  head{display:none !important}
  body{margin:0;background:var(--bg);color:var(--ink);
       font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
