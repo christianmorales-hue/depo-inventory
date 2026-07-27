@@ -133,8 +133,18 @@ def get_quote(quote_id: int, request: Request):
     q = run("SELECT * FROM quote WHERE quote_id = %s", (quote_id,))
     if not q:
         raise HTTPException(404, "Cotización no encontrada.")
-    lines = run("SELECT * FROM quote_line WHERE quote_id = %s ORDER BY line_no",
-                (quote_id,))
+    number = q[0]["quote_number"]
+    lines = run("""SELECT ql.*, i.make AS brand,
+                     (SELECT b.name FROM stock_movement m
+                        JOIN branch b ON b.branch_id = m.branch_id
+                       WHERE m.item_id = ql.item_id
+                         AND m.reason = 'sale'
+                         AND m.note = %s
+                       ORDER BY m.movement_id LIMIT 1) AS branch
+                   FROM quote_line ql
+                   LEFT JOIN item i ON i.item_id = ql.item_id
+                   WHERE ql.quote_id = %s ORDER BY ql.line_no""",
+                (f"nota de venta #{number}", quote_id))
     for r in [q[0]] + lines:
         for k, v in r.items():
             if hasattr(v, "isoformat"):
@@ -254,13 +264,15 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
                                 leading=11)
     small_style = ParagraphStyle("small", fontName="Helvetica", fontSize=8,
                                  leading=10)
+    code_style = ParagraphStyle("codecol", fontName="Helvetica-Bold", fontSize=10,
+                                leading=12)
     subtotal = 0.0
     for i, line in enumerate(lines):
         desc = line["description"] + (f" ({line['side']})" if line["side"] else "")
         para = Paragraph(desc, body_style)
         w_desc = col[3] - col[2] - 4 * mm
         _, h = para.wrap(w_desc, 40 * mm)
-        code_para = Paragraph(line.get("part_code") or "—", small_style)
+        code_para = Paragraph(line.get("part_code") or "—", code_style)
         _, ch = code_para.wrap(col[1] - col[0] - 4 * mm, 40 * mm)
         brand_para = Paragraph(line.get("brand") or "--", small_style)
         _, bh = brand_para.wrap(col[2] - col[1] - 4 * mm, 40 * mm)
@@ -304,15 +316,10 @@ def build_pdf(quote_id: int, doc_type: str = "cotizacion") -> bytes:
     c.setFont("Helvetica-Oblique", 9)
     c.setFillColor(colors.HexColor("#6B757C"))
     if is_nota:
-        c.drawString(M, 30 * mm, "Nota de venta - documento no fiscal.")
-        c.drawString(M, 25 * mm,
-                     "Los productos han salido del inventario en la sucursal correspondiente.")
-        # Cancellation policy, split across two lines to fit the page width.
+        c.drawString(M, 25 * mm, "Nota de venta - documento no fiscal.")
         c.drawString(M, 20 * mm,
                      "La gerencia se reserva el derecho a aceptar o rechazar la anulación "
                      "de la orden de venta.")
-        c.drawString(M, 16 * mm,
-                     "La solicitud debe ser realizada en un plazo de 24 h.")
     else:
         c.drawString(M, 25 * mm,
                      f"Cotización válida por {q['valid_days']} días desde la fecha de emisión.")
@@ -418,6 +425,8 @@ class SaleIn(BaseModel):
     customer_nit: str | None = None
     customer_phone: str | None = None
     note: str | None = None
+    hold: bool = False        # if True, record the sale but DON'T deduct stock
+                              # yet - the warehouse confirmation will deduct it
     lines: list[SaleLine]
 
 
@@ -454,6 +463,8 @@ def create_sale(body: SaleIn, request: Request):
         need[(l.item_id, l.branch_id)] += l.qty
 
     for (item_id, branch_id), qty in need.items():
+        if body.hold:
+            break        # held sales verify stock at warehouse-confirm time
         have = run("""SELECT coalesce(sum(qty_delta), 0) AS q
                       FROM stock_movement WHERE item_id = %s AND branch_id = %s
                       AND condition = 'good'""", (item_id, branch_id))[0]["q"]
@@ -490,11 +501,13 @@ def create_sale(body: SaleIn, request: Request):
              it["side"], line.qty, usd, net_bob, disc))
         # Record the sale in the ledger at the net (discounted) boliviano price,
         # so revenue reports reflect what the customer actually paid.
-        run("""INSERT INTO stock_movement (item_id, branch_id, qty_delta, reason,
-                     price_usd, fx_rate, unit_price, note, created_by)
-                 VALUES (%s, %s, %s, 'sale', %s, %s, %s, %s, %s)""",
-            (line.item_id, line.branch_id, -line.qty, usd, fx["rate"], net_bob,
-             f"nota de venta #{q['quote_number']}", user["name"]))
+        # When hold=True we skip this - stock only moves on warehouse confirm.
+        if not body.hold:
+            run("""INSERT INTO stock_movement (item_id, branch_id, qty_delta, reason,
+                         price_usd, fx_rate, unit_price, note, created_by)
+                     VALUES (%s, %s, %s, 'sale', %s, %s, %s, %s, %s)""",
+                (line.item_id, line.branch_id, -line.qty, usd, fx["rate"], net_bob,
+                 f"nota de venta #{q['quote_number']}", user["name"]))
 
     return {"sale_id": q["quote_id"], "sale_number": q["quote_number"]}
 

@@ -150,6 +150,29 @@ PAGE = r"""
  .price-usd{color:var(--muted);font-size:12px}
  .please-login{text-align:center;padding:80px 20px;color:var(--muted);
         font-size:17px}
+ .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;
+        display:flex;align-items:flex-start;justify-content:center;
+        padding:40px 16px;overflow-y:auto}
+ .modal-box{background:var(--card);color:var(--ink);border-radius:14px;
+        max-width:640px;width:100%;padding:26px;position:relative;
+        border:1px solid var(--line)}
+ .modal-close{position:absolute;top:12px;right:12px;border:none;background:none;
+        font-size:20px;color:var(--muted);cursor:pointer;padding:6px}
+ .modal-close:hover{color:var(--ink)}
+ .nota-view h2{margin:0 0 4px}
+ .nota-view .meta{color:var(--muted);font-size:13px;margin-bottom:16px}
+ .nota-view table{width:100%;border-collapse:collapse;margin:12px 0}
+ .nota-view th,.nota-view td{text-align:left;padding:7px 6px;font-size:13px;
+        border-bottom:1px solid var(--line)}
+ .nota-view th{color:var(--muted);font-weight:600}
+ .nota-view td.num,.nota-view th.num{text-align:right}
+ .nota-view .tot{text-align:right;font-size:16px;font-weight:700;margin-top:10px}
+ .ful-tabs{display:flex;gap:6px;margin:12px 0}
+ .ful-tab{flex:1;padding:10px;border:1px solid var(--line);border-radius:8px;
+        background:var(--card);color:var(--muted);cursor:pointer;font-size:13px}
+ .ful-tab.on{background:var(--focus);color:#fff;border-color:var(--focus)}
+ .ful-pane{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+ .ful-pane select,.ful-pane input{width:100%;box-sizing:border-box}
 </style>
 </head>
 <body>
@@ -327,6 +350,17 @@ PAGE = r"""
     <div id="rlist" class="list"></div>
   </section>
 
+  <section id="v-bodega" hidden>
+    <h3>Solicitud a bodega</h3>
+    <p class="hint">Pedidos de nota de venta esperando preparación y confirmación
+      de bodega. El stock se descuenta al confirmar.</p>
+    <div class="bar">
+      <button id="bod-pend" class="on">Pendientes</button>
+      <button id="bod-all">Todas</button>
+    </div>
+    <div id="bodlist" class="list" style="margin-top:12px"></div>
+  </section>
+
   <section id="v-caja" hidden>
     <h3>Caja diaria</h3>
     <div class="bar">
@@ -380,6 +414,13 @@ PAGE = r"""
   </div>
 </div>
 
+<div id="modal" class="modal" hidden>
+  <div class="modal-box">
+    <button class="modal-close" id="modal-close">✕</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 let user = {}, branches = [], rows = [], openId = null, term = '';
@@ -389,6 +430,7 @@ const VIEWS = [['buscar','Buscar'],['vehiculo','Por vehículo'],
                ['traspasos','Traspasos'],['reservas','Reservas'],
                ['cotizacion','Cotización'],['nota','Nota de venta'],
                ['devolucion','Devoluciones'],['recepcion','Recepción'],
+               ['bodega','Solicitud a bodega'],
                ['caja','Caja'],['reportes','Reportes']];
 
 const REASONS = [
@@ -494,6 +536,7 @@ function go(v){
   if (v === 'nota')      { drawNCart(); loadSales(); }
   if (v === 'devolucion') { drawDCart(); loadDevoluciones(); }
   if (v === 'recepcion') { fillBranchSelect('#rbranch'); drawRCart(); loadRecepciones(); }
+  if (v === 'bodega')    loadBodega('pendiente');
   if (v === 'caja')      { fillBranchSelect('#cbranch'); loadCaja(); }
   if (v === 'reportes')  drawArchive();
 }
@@ -1150,7 +1193,57 @@ $('#cgo').onclick = async () => {
 // -------------------------------------------------------- nota de venta
 let ncart = [];  // {item_id, description, side, part_code, price_bob, qty, branch_id}
 
-// ------------------------------------------------ import cotización -> nota
+// ------------------------------------------------------------------ modal
+function openModal(html){
+  $('#modal-body').innerHTML = html;
+  $('#modal').hidden = false;
+}
+function closeModal(){ $('#modal').hidden = true; $('#modal-body').innerHTML = ''; }
+$('#modal-close').onclick = closeModal;
+$('#modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
+
+async function showNotaDetail(quote_id){
+  let data;
+  try { data = await api('/api/quotes/' + quote_id); }
+  catch (e) { alert('No se pudo cargar: ' + e.message); return; }
+  const q = data.quote;
+  const r050 = n => Math.round(n * 2) / 2;
+  let total = 0;
+  const rows = data.lines.map(ln => {
+    const disc = ln.discount_bob || 0;
+    const unit = r050(Math.max(0, ln.price_bob));
+    const line = unit * ln.qty;
+    total += line;
+    return `<tr>
+      <td>${esc(ln.part_code || '—')}</td>
+      <td>${esc(ln.brand || '--')}</td>
+      <td>${esc(ln.description)}${ln.side ? ' ('+ln.side+')' : ''}</td>
+      <td>${esc(ln.branch || '—')}</td>
+      <td class="num">${ln.qty}</td>
+      <td class="num">Bs ${unit.toFixed(2)}</td>
+      <td class="num">Bs ${line.toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+  const cancelled = q.cancelled_at
+    ? `<span class="flag">ANULADA</span>` : '';
+  openModal(`<div class="nota-view">
+    <h2>Nota de venta Nº ${q.quote_number} ${cancelled}</h2>
+    <div class="meta">
+      Fecha: ${(q.created_at||'').slice(0,10)} · TC: ${q.fx_rate} Bs/USD<br>
+      Cliente: ${esc(q.customer || '—')}${
+        q.customer_nit ? ' · NIT: '+esc(q.customer_nit) : ''}${
+        q.customer_phone ? ' · Tel: '+esc(q.customer_phone) : ''}
+    </div>
+    <table>
+      <tr><th>Código</th><th>Marca</th><th>Descripción</th><th>Sucursal</th>
+          <th class="num">Cant.</th><th class="num">P.Unit</th><th class="num">Total</th></tr>
+      ${rows}
+    </table>
+    <div class="tot">Total: Bs ${total.toFixed(2)}</div>
+  </div>`);
+}
+
+
 async function toggleQuotePicker(){
   const picker = document.getElementById('nquote-picker');
   if (!picker.hidden) { picker.hidden = true; return; }
@@ -1254,7 +1347,7 @@ async function nsearch(){
       part_code: fresh.part_code,
       price_bob: fresh.price_bob || 0,
       stock: fresh.stock,
-      qty: 1,
+      qty: null,
       branch_id
     });
     $('#nq').value = ''; box.innerHTML = ''; drawNCart();
@@ -1275,7 +1368,8 @@ function drawNCart(){
   const r050 = n => Math.round(n * 2) / 2;
   box.innerHTML = ncart.map((c,i) => {
     const disc = c.discount || 0;
-    const lineTotal = r050(Math.max(0, (c.price_bob - disc))) * c.qty;
+    const qty = c.qty || 0;
+    const lineTotal = r050(Math.max(0, (c.price_bob - disc))) * qty;
     return `
     <div class="card"><div class="bar">
       <div class="side ${c.side?'':'no'}" style="width:44px">${c.side||'—'}</div>
@@ -1288,14 +1382,16 @@ function drawNCart(){
         ).join('')}</select>
       <label class="sub">Desc. Bs <input type="number" min="0" step="0.01"
         value="${disc || ''}" placeholder="0" data-disc="${i}" style="width:74px"></label>
-      <input type="number" min="1" value="${c.qty}" data-q="${i}" style="width:64px">
+      <input type="number" min="1" value="${c.qty ?? ''}" placeholder="Cant."
+        data-q="${i}" style="width:64px">
       <span class="sub">Bs ${lineTotal.toFixed(2)}</span>
       <button class="danger" data-rm="${i}">Quitar</button>
     </div></div>`;
   }).join('');
   box.querySelectorAll('[data-q]').forEach(inp => inp.oninput = () => {
-    ncart[+inp.dataset.q].qty = Math.max(1, parseInt(inp.value,10) || 1);
-    drawNCart();
+    const v = inp.value.trim();
+    ncart[+inp.dataset.q].qty = v === '' ? null : Math.max(1, parseInt(v,10) || 1);
+    ntotal();
   });
   box.querySelectorAll('[data-disc]').forEach(inp => inp.oninput = () => {
     ncart[+inp.dataset.disc].discount = Math.max(0, parseFloat(inp.value) || 0);
@@ -1327,6 +1423,7 @@ async function loadSales(){
         <div class="code">${q.fecha} · ${q.lineas} productos · Bs ${
           (q.total_bob||0).toFixed(2)}</div>
       </div>
+      <button data-nver="${q.quote_id}">Ver</button>
       <button data-npdf="${q.quote_id}">PDF</button>
       <button data-npng="${q.quote_id}">PNG</button>
       ${q.cancelled ? '' :
@@ -1338,6 +1435,8 @@ async function loadSales(){
         `<button class="danger" data-cancel="${q.quote_id}"
           data-num="${q.quote_number}">Anular</button>`}
     </div></div>`).join('') : '<p class="empty">Aún no hay notas de venta.</p>';
+  box.querySelectorAll('[data-nver]').forEach(b => b.onclick = () =>
+    showNotaDetail(+b.dataset.nver));
   box.querySelectorAll('[data-npdf]').forEach(b => b.onclick = () =>
     downloadSalePdf(+b.dataset.npdf));
   box.querySelectorAll('[data-npng]').forEach(b => b.onclick = () =>
@@ -1396,27 +1495,236 @@ $('#nq').addEventListener('input', () => {
   clearTimeout(window.nt); window.nt = setTimeout(nsearch, 220);
 });
 $('#nclr').onclick = () => { ncart = []; drawNCart(); };
-$('#ngo2').onclick = async () => {
+$('#ngo2').onclick = () => {
   const m = $('#nmsg2');
   if (!ncart.length) { m.className='msg bad'; m.textContent='Agregue productos primero.'; return; }
   if (!$('#nn').value.trim()) { m.className='msg bad'; m.textContent='Escriba el nombre del cliente.'; return; }
-  try {
-    const r = await api('/api/sales', {method:'POST', body: JSON.stringify({
-      customer: $('#nn').value, customer_nit: $('#nni').value || null,
-      customer_phone: $('#nph').value || null,
-      lines: ncart.map(c => ({item_id: c.item_id, branch_id: c.branch_id,
-                              qty: c.qty, discount: c.discount || 0}))})});
-    m.className = 'msg good';
-    m.textContent = `Nota Nº ${r.sale_number} registrada. Stock actualizado.`;
-    await sendWaSale({sale_id: r.sale_id, phone: $('#nph').value,
-                      customer: $('#nn').value, number: r.sale_number});
-    ncart = []; drawNCart();
-    $('#nn').value = $('#nni').value = ''; $('#nph').value = '591';
-    loadSales();
-    // Refresh Buscar too, since stock changed.
-    if (view === 'buscar') refresh();
-  } catch (e) { m.className='msg bad'; m.textContent = e.message; }
+  const sinCant = ncart.find(c => !c.qty || c.qty < 1);
+  if (sinCant) {
+    m.className='msg bad';
+    m.textContent = `Falta la cantidad en "${sinCant.description}".`;
+    return;
+  }
+  openFulfillmentModal();
 };
+
+async function openFulfillmentModal(){
+  let cities = [];
+  try { cities = await api('/api/cities'); } catch (e) { cities = []; }
+  const cityOpts = cities.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const branchOpts = branches.map(b =>
+    `<option value="${b.branch_id}">${esc(b.name)}</option>`).join('');
+  openModal(`<div class="nota-view">
+    <h2>¿Cómo recibe el cliente el pedido?</h2>
+    <div class="ful-tabs">
+      <button class="ful-tab on" data-ful="recojo">Recojo en tienda</button>
+      <button class="ful-tab" data-ful="entrega">Entrega a domicilio</button>
+      <button class="ful-tab" data-ful="envio">Envío bus/avión</button>
+    </div>
+
+    <div class="ful-pane" data-pane="recojo">
+      <label class="sub">Sucursal de recojo</label>
+      <select id="ful-branch">${branchOpts}</select>
+    </div>
+
+    <div class="ful-pane" data-pane="entrega" hidden>
+      <label class="showpw"><input type="checkbox" id="ful-samename" checked>
+        Mismo nombre que la nota</label>
+      <input id="ful-e-name" placeholder="Nombre de quien recibe" hidden>
+      <label class="sub">Ciudad</label>
+      <select id="ful-e-city">${cityOpts}</select>
+      <input id="ful-e-address" placeholder="Dirección">
+      <label class="sub">Fecha de entrega</label>
+      <input id="ful-e-date" type="date">
+    </div>
+
+    <div class="ful-pane" data-pane="envio" hidden>
+      <input id="ful-s-name" placeholder="Nombre de quien recibe">
+      <label class="sub">Ciudad</label>
+      <select id="ful-s-city">${cityOpts}</select>
+      <label class="sub">Transporte</label>
+      <select id="ful-s-transport"><option value="bus">Bus</option>
+        <option value="avion">Avión</option></select>
+      <input id="ful-s-company" placeholder="Nombre de la empresa de transporte">
+      <label class="sub">Pago</label>
+      <select id="ful-s-payment"><option value="pagado">Pagado</option>
+        <option value="por_pagar">Por pagar</option></select>
+    </div>
+
+    <div class="bar" style="margin-top:18px">
+      <button class="primary" id="ful-go">Registrar venta y enviar a bodega</button>
+    </div>
+    <div class="msg" id="ful-msg"></div>
+  </div>`);
+
+  let method = 'recojo';
+  const modal = $('#modal-body');
+  modal.querySelectorAll('.ful-tab').forEach(t => t.onclick = () => {
+    method = t.dataset.ful;
+    modal.querySelectorAll('.ful-tab').forEach(x => x.classList.toggle('on', x === t));
+    modal.querySelectorAll('.ful-pane').forEach(p =>
+      p.hidden = p.dataset.pane !== method);
+  });
+  const sn = modal.querySelector('#ful-samename');
+  if (sn) sn.onchange = () => {
+    modal.querySelector('#ful-e-name').hidden = sn.checked;
+  };
+
+  modal.querySelector('#ful-go').onclick = async () => {
+    const fm = modal.querySelector('#ful-msg');
+    fm.textContent = 'Registrando…';
+    // Build the fulfillment payload.
+    let ful = {method};
+    if (method === 'recojo') {
+      ful.branch_id = parseInt(modal.querySelector('#ful-branch').value, 10);
+    } else if (method === 'entrega') {
+      const same = modal.querySelector('#ful-samename').checked;
+      ful.recipient = same ? $('#nn').value : modal.querySelector('#ful-e-name').value;
+      ful.city = modal.querySelector('#ful-e-city').value;
+      ful.address = modal.querySelector('#ful-e-address').value;
+      ful.dropoff_date = modal.querySelector('#ful-e-date').value || null;
+    } else {
+      ful.recipient = modal.querySelector('#ful-s-name').value;
+      ful.city = modal.querySelector('#ful-s-city').value;
+      ful.transport = modal.querySelector('#ful-s-transport').value;
+      ful.company = modal.querySelector('#ful-s-company').value;
+      ful.payment = modal.querySelector('#ful-s-payment').value;
+    }
+    try {
+      // Create the nota as HELD - stock deducts only when bodega confirms.
+      const r = await api('/api/sales', {method:'POST', body: JSON.stringify({
+        customer: $('#nn').value, customer_nit: $('#nni').value || null,
+        customer_phone: $('#nph').value || null, hold: true,
+        lines: ncart.map(c => ({item_id: c.item_id, branch_id: c.branch_id,
+                                qty: c.qty, discount: c.discount || 0}))})});
+      await api('/api/notas/' + r.sale_id + '/fulfillment',
+                {method:'POST', body: JSON.stringify(ful)});
+      closeModal();
+      const msg = $('#nmsg2');
+      msg.className = 'msg good';
+      msg.textContent = `Nota Nº ${r.sale_number} creada y enviada a bodega. `
+        + `El stock se descontará al confirmarse.`;
+      await sendWaSale({sale_id: r.sale_id, phone: $('#nph').value,
+                        customer: $('#nn').value, number: r.sale_number});
+      ncart = []; drawNCart();
+      $('#nn').value = $('#nni').value = ''; $('#nph').value = '591';
+      loadSales();
+    } catch (e) { fm.textContent = e.message; }
+  };
+}
+
+// ------------------------------------------------------- Solicitud a bodega
+let bodegaFilter = 'pendiente';
+async function loadBodega(status){
+  bodegaFilter = status || bodegaFilter;
+  $('#bod-pend').classList.toggle('on', bodegaFilter === 'pendiente');
+  $('#bod-all').classList.toggle('on', bodegaFilter === 'all');
+  const box = $('#bodlist');
+  let list = [];
+  try { list = await api('/api/bodega?status=' + bodegaFilter); } catch (e) {}
+  if (!list.length) { box.innerHTML = '<p class="empty">Sin solicitudes.</p>'; return; }
+  box.innerHTML = list.map(b => {
+    const badge = b.status === 'pendiente' ? '<span class="flag">PENDIENTE</span>'
+      : b.status === 'confirmado' ? '<span class="flag" style="border-color:var(--have);color:var(--have)">CONFIRMADO</span>'
+      : '<span class="flag" style="border-color:var(--warn);color:var(--warn)">RECHAZADO</span>';
+    let entrega = '';
+    if (b.method === 'recojo') entrega = 'Recojo en ' + esc(b.pickup_branch || '—');
+    else if (b.method === 'entrega') entrega = 'Entrega · ' + esc(b.city||'') + ' · ' + esc(b.address||'');
+    else if (b.method === 'envio') entrega = 'Envío ' + esc(b.transport||'') + ' · ' + esc(b.company||'') + ' · ' + esc(b.city||'');
+    return `<div class="card">
+      <div class="bar">
+        <div style="flex:1;min-width:200px">
+          <div class="desc">Pedido Nº ${b.numero} · Nota ${b.quote_number} · ${esc(b.customer)} ${badge}</div>
+          <div class="code">${b.lineas} productos · ${entrega}</div>
+        </div>
+        <button data-bver="${b.bodega_id}">Ver</button>
+        <button class="wa" data-bwa="${b.bodega_id}">WhatsApp</button>
+        <button data-bpdf="${b.quote_id}">PDF</button>
+        <button data-bpng="${b.quote_id}">PNG</button>
+        ${b.status === 'pendiente' ? `
+          <button class="primary" data-bok="${b.bodega_id}">Confirmar</button>
+          <button class="danger" data-bno="${b.bodega_id}">Rechazar</button>` : ''}
+      </div></div>`;
+  }).join('');
+  box.querySelectorAll('[data-bver]').forEach(x => x.onclick = () => showBodegaDetail(+x.dataset.bver));
+  box.querySelectorAll('[data-bpdf]').forEach(x => x.onclick = () => downloadSalePdf(+x.dataset.bpdf));
+  box.querySelectorAll('[data-bpng]').forEach(x => x.onclick = () =>
+    downloadDoc('/api/sales/' + x.dataset.bpng + '/png', 'nota.png'));
+  box.querySelectorAll('[data-bwa]').forEach(x => x.onclick = () => sendBodegaWa(+x.dataset.bwa));
+  box.querySelectorAll('[data-bok]').forEach(x => x.onclick = async () => {
+    if (!confirm('¿Confirmar el pedido? Se descontará el stock ahora.')) return;
+    try { await api('/api/bodega/' + x.dataset.bok + '/confirm', {method:'POST'});
+      loadBodega(); if (view === 'buscar') refresh(); }
+    catch (e) { alert(e.message); }
+  });
+  box.querySelectorAll('[data-bno]').forEach(x => x.onclick = async () => {
+    if (!confirm('¿Rechazar el pedido? La nota se anulará.')) return;
+    try { await api('/api/bodega/' + x.dataset.bno + '/reject', {method:'POST'});
+      loadBodega(); if (view === 'buscar') refresh(); }
+    catch (e) { alert(e.message); }
+  });
+}
+$('#bod-pend').onclick = () => loadBodega('pendiente');
+$('#bod-all').onclick = () => loadBodega('all');
+
+async function showBodegaDetail(bodega_id){
+  let d;
+  try { d = await api('/api/bodega/' + bodega_id); }
+  catch (e) { alert(e.message); return; }
+  openModal(bodegaHtml(d));
+}
+
+function bodegaHtml(d){
+  const f = d.fulfillment || {};
+  let entrega = '';
+  if (f.method === 'recojo') entrega = `Recojo en tienda: <b>${esc(f.pickup_branch||'—')}</b>`;
+  else if (f.method === 'entrega') entrega =
+    `Entrega a domicilio<br>Recibe: ${esc(f.recipient||'—')}<br>`
+    + `Ciudad: ${esc(f.city||'—')}<br>Dirección: ${esc(f.address||'—')}<br>`
+    + `Fecha: ${esc((f.dropoff_date||'').slice(0,10)||'—')}`;
+  else if (f.method === 'envio') entrega =
+    `Envío por ${esc(f.transport||'—')}<br>Recibe: ${esc(f.recipient||'—')}<br>`
+    + `Ciudad: ${esc(f.city||'—')}<br>Empresa: ${esc(f.company||'—')}<br>`
+    + `Pago: ${f.payment === 'pagado' ? 'Pagado' : 'Por pagar'}`;
+  const rows = d.lines.map(ln => `<tr>
+    <td>${esc(ln.part_code||'—')}</td><td>${esc(ln.brand||'--')}</td>
+    <td>${esc(ln.description)}${ln.side?' ('+ln.side+')':''}</td>
+    <td class="num">${ln.qty}</td></tr>`).join('');
+  return `<div class="nota-view">
+    <h2>Pedido a bodega Nº ${d.request.numero}</h2>
+    <div class="meta">Nota ${d.quote.quote_number} · Cliente: ${esc(d.quote.customer)}${
+      d.quote.customer_phone ? ' · Tel: '+esc(d.quote.customer_phone) : ''}</div>
+    <div class="card" style="padding:12px;margin-bottom:12px">${entrega}</div>
+    <table>
+      <tr><th>Código</th><th>Marca</th><th>Descripción</th><th class="num">Cant.</th></tr>
+      ${rows}
+    </table>
+  </div>`;
+}
+
+function sendBodegaWa(bodega_id){
+  api('/api/bodega/' + bodega_id).then(d => {
+    const f = d.fulfillment || {};
+    let entrega = '';
+    if (f.method === 'recojo') entrega = `Recojo en tienda: ${f.pickup_branch||'-'}`;
+    else if (f.method === 'entrega') entrega =
+      `Entrega a domicilio - ${f.recipient||''} - ${f.city||''} - ${f.address||''}`
+      + (f.dropoff_date ? ' - ' + f.dropoff_date.slice(0,10) : '');
+    else if (f.method === 'envio') entrega =
+      `Envio ${f.transport||''} - ${f.company||''} - ${f.city||''} - `
+      + (f.payment === 'pagado' ? 'PAGADO' : 'POR PAGAR');
+    const items = d.lines.map(ln =>
+      `- ${ln.part_code||''} ${ln.description}${ln.side?' ('+ln.side+')':''} x${ln.qty}`
+    ).join('\n');
+    const text = `*SOLICITUD A BODEGA Nº ${d.request.numero}*\n`
+      + `Nota de venta: ${d.quote.quote_number}\n`
+      + `Cliente: ${d.quote.customer}\n\n`
+      + `*Entrega:* ${entrega}\n\n`
+      + `*Productos:*\n${items}\n\n`
+      + `Por favor preparar y confirmar.`;
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  }).catch(e => alert(e.message));
+}
 
 // ------------------------------------------------- shared branch selector
 function fillBranchSelect(sel){
