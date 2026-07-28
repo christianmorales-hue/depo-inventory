@@ -2110,7 +2110,8 @@ async function drawArchive(){
 // -------------------------------------------------------------- admin panel
 function drawAdmin(){
   const el = $('#admin');
-  if (user.role !== 'admin') { el.innerHTML = ''; return; }
+  if (!el) return;                // section not in DOM yet - never throw
+  if (!user || user.role !== 'admin') { el.innerHTML = ''; return; }
   el.innerHTML = `
   <details open><summary>Producto nuevo</summary>
     <div class="bar">
