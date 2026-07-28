@@ -367,3 +367,17 @@ def update_branch(branch_id: int, body: BranchIn, request: Request):
 @app.get("/", response_class=HTMLResponse)
 def home():
     return PAGE
+
+
+# ---------------------------------------------------------------------------
+# Route modules. These import `app`, `run`, `require` etc. from this file and
+# register their own endpoints. Import order matters: pricing must load before
+# overrides (overrides' search uses pricing helpers), and every module that
+# defines /api routes must be listed here or those routes will 404.
+from api import pricing        # noqa: E402  (/api/fx, currency conversion)
+from api import overrides      # noqa: E402  (price-aware search, item CRUD)
+from api import features       # noqa: E402  (fitment, transfers, reservations)
+from api import quotes         # noqa: E402  (cotizaciones, notas, PDFs, PNGs)
+from api import operations     # noqa: E402  (devoluciones, recepción, caja, bodega)
+from api import users          # noqa: E402  (accounts, roles)
+from api import reports_archive  # noqa: E402  (scheduled report snapshots)
