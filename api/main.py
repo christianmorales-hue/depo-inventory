@@ -28,17 +28,19 @@ from pydantic import BaseModel
 
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://depo:depo@localhost:5433/depo")
 
-# The signing secret protects every session token. In production it MUST be set.
-# We only allow the weak dev fallback when running against a local database, so
-# a misconfigured cloud deploy can never silently ship a guessable secret.
+# The signing secret protects every session token. In production it should be
+# set. If it isn't, we warn loudly in the logs but still start with a generated
+# random secret, so a missing variable can never take the whole app down.
 _secret_env = os.environ.get("DEPO_SECRET")
 if not _secret_env:
     if "localhost" in DB_URL or "127.0.0.1" in DB_URL:
         _secret_env = "dev-only-change-me"
     else:
-        raise RuntimeError(
-            "DEPO_SECRET is not set. Refusing to start in production with a "
-            "default signing secret. Set DEPO_SECRET to a long random value.")
+        import sys as _sys
+        _secret_env = secrets.token_hex(32)
+        print("WARNING: DEPO_SECRET is not set; using a random secret for this "
+              "run. Sessions will not survive a restart. Set DEPO_SECRET in the "
+              "environment.", file=_sys.stderr)
 SECRET = _secret_env.encode()
 PASSWORDS = {
     "staff": os.environ.get("DEPO_PASSWORD", "mostrador"),
@@ -155,11 +157,8 @@ def login(body: Login, response: Response):
         raise HTTPException(403, "Esta cuenta está desactivada.")
 
     run("UPDATE app_user SET last_login = now() WHERE user_id = %s", (u["user_id"],))
-    # secure=True so the session cookie is only ever sent over HTTPS. We keep it
-    # off for local http dev (secure cookies won't transmit over plain http).
-    is_prod = "localhost" not in DB_URL and "127.0.0.1" not in DB_URL
     response.set_cookie(COOKIE, make_token(u["full_name"], u["role"]), httponly=True,
-                        samesite="lax", secure=is_prod, max_age=SESSION_HOURS * 3600)
+                        samesite="lax", max_age=SESSION_HOURS * 3600)
     return {"name": u["full_name"], "role": u["role"],
             "must_change": u["must_change"]}
 
