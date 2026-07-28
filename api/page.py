@@ -434,6 +434,7 @@ PAGE = r"""
 const $ = s => document.querySelector(s);
 let user = {}, branches = [], rows = [], openId = null, term = '';
 let pairs = new Set(), transit = [], holds = [], vehicles = [], view = 'buscar';
+let bodegaPending = 0;
 
 const VIEWS = [['buscar','Buscar'],['vehiculo','Por vehículo'],
                ['traspasos','Traspasos'],['reservas','Reservas'],
@@ -508,13 +509,29 @@ async function loadBranches(){
   branches = (await api('/api/branches')).filter(b => b.is_real && b.is_active);
 }
 
-async function loadSide(){
-  if (!user.name) { pairs = new Set(); transit = []; holds = []; return; }
+async function refreshBadges(){
+  // Re-fetch the pending counts that drive the tab badges, then redraw the nav.
+  if (!user.name) return;
   try {
-    const [p, t, h] = await Promise.all([
-      api('/api/broken-pairs'), api('/api/transfers'), api('/api/reservations')]);
+    const [t, h, bod] = await Promise.all([
+      api('/api/transfers').catch(() => transit),
+      api('/api/reservations').catch(() => holds),
+      api('/api/bodega?status=pendiente').catch(() => [])]);
+    transit = t; holds = h;
+    bodegaPending = Array.isArray(bod) ? bod.length : 0;
+  } catch (e) {}
+  drawNav();
+}
+
+async function loadSide(){
+  if (!user.name) { pairs = new Set(); transit = []; holds = []; bodegaPending = 0; return; }
+  try {
+    const [p, t, h, bod] = await Promise.all([
+      api('/api/broken-pairs'), api('/api/transfers'), api('/api/reservations'),
+      api('/api/bodega?status=pendiente').catch(() => [])]);
     pairs = new Set(p.map(x => x.item_id + ':' + x.branch_id));
     transit = t; holds = h;
+    bodegaPending = Array.isArray(bod) ? bod.length : 0;
   } catch (e) { /* not logged in yet */ }
   drawNav();
 }
@@ -529,6 +546,7 @@ function drawNav(){
     let pill = '';
     if (k === 'traspasos' && transit.length) pill = `<span class="pill">${transit.length}</span>`;
     if (k === 'reservas' && holds.length)   pill = `<span class="pill">${holds.length}</span>`;
+    if (k === 'bodega' && bodegaPending)    pill = `<span class="pill">${bodegaPending}</span>`;
     if (k === 'reportes' && user.role !== 'admin') return '';
     if (k === 'admin' && user.role !== 'admin') return '';
     return `<button data-v="${k}" class="${view === k ? 'on' : ''}">${label}${pill}</button>`;
@@ -1674,7 +1692,7 @@ async function openFulfillmentModal(){
                         customer: $('#nn').value, number: r.sale_number});
       ncart = []; drawNCart();
       $('#nn').value = $('#nni').value = ''; $('#nph').value = '591';
-      loadSales();
+      loadSales(); refreshBadges();
     } catch (e) { fm.textContent = e.message; }
   };
 }
@@ -1720,13 +1738,13 @@ async function loadBodega(status){
   box.querySelectorAll('[data-bok]').forEach(x => x.onclick = async () => {
     if (!confirm('¿Confirmar el pedido? Se descontará el stock ahora.')) return;
     try { await api('/api/bodega/' + x.dataset.bok + '/confirm', {method:'POST'});
-      loadBodega(); if (view === 'buscar') refresh(); }
+      loadBodega(); refreshBadges(); if (view === 'buscar') refresh(); }
     catch (e) { alert(e.message); }
   });
   box.querySelectorAll('[data-bno]').forEach(x => x.onclick = async () => {
     if (!confirm('¿Rechazar el pedido? La nota se anulará.')) return;
     try { await api('/api/bodega/' + x.dataset.bno + '/reject', {method:'POST'});
-      loadBodega(); if (view === 'buscar') refresh(); }
+      loadBodega(); refreshBadges(); if (view === 'buscar') refresh(); }
     catch (e) { alert(e.message); }
   });
 }
