@@ -638,6 +638,13 @@ $('#q').addEventListener('input', () => {
   clearTimeout(window.t); window.t = setTimeout(search, 220);
 });
 
+// Load vehicle makes the moment the section is expanded (not just on tab open),
+// so the dropdown is populated right when the user wants it.
+(function(){
+  const veh = document.getElementById('vehsearch');
+  if (veh) veh.addEventListener('toggle', () => { if (veh.open) loadVehicles(); });
+})();
+
 async function search(){
   term = $('#q').value.trim();
   rows = await api('/api/search?q=' + encodeURIComponent(term));
@@ -870,18 +877,30 @@ function panel(r){
 }
 
 // ----------------------------------------------------------- vehicle search
+let vehiclesLoading = false;
 async function loadVehicles(){
-  if (vehicles.length) return;
-  vehicles = await api('/api/vehicles');
+  if (vehicles.length || vehiclesLoading) return;
+  vehiclesLoading = true;
+  $('#vmk').innerHTML = '<option value="">Cargando marcas…</option>';
+  try {
+    vehicles = await api('/api/vehicles');
+  } catch (e) {
+    $('#vmk').innerHTML = '<option value="">Error al cargar</option>';
+    vehiclesLoading = false;
+    return;
+  }
   const makes = [...new Set(vehicles.map(v => v.make))].sort();
   $('#vmk').innerHTML = '<option value="">Marca…</option>' +
     makes.map(m => `<option>${esc(m)}</option>`).join('');
   $('#vmk').onchange = () => {
-    const ms = vehicles.filter(v => v.make === $('#vmk').value && v.model);
+    const ms = [...new Set(vehicles
+      .filter(v => v.make === $('#vmk').value && v.model)
+      .map(v => v.model))].sort();
     $('#vmd').innerHTML = '<option value="">Todos los modelos</option>' +
-      ms.map(v => `<option>${esc(v.model)}</option>`).join('');
+      ms.map(m => `<option>${esc(m)}</option>`).join('');
   };
   $('#vgo').onclick = runVehicle;
+  vehiclesLoading = false;
 }
 
 async function runVehicle(){
