@@ -111,10 +111,15 @@ def export_report(report: str, request: Request):
 # ------------------------------------------------------------- vehicle search
 @app.get("/api/vehicles")
 def vehicles():
-    return run("""SELECT v.make, v.model, count(*) AS partes
-                  FROM vehicle v JOIN item_fitment f USING (vehicle_id)
-                  JOIN item i USING (item_id) WHERE i.is_active
-                  GROUP BY v.make, v.model ORDER BY v.make, v.model""")
+    # The dropdowns only need distinct make/model pairs. We deliberately do NOT
+    # count parts per model here (the frontend never used that count) - counting
+    # meant joining item_fitment + item and grouping over every fitment row,
+    # which made this endpoint take several seconds. DISTINCT on the vehicle
+    # table alone is near-instant.
+    return run("""SELECT DISTINCT make, model
+                  FROM vehicle
+                  WHERE make IS NOT NULL
+                  ORDER BY make, model""")
 
 
 @app.get("/api/vehicle-parts")
