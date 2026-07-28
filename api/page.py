@@ -202,21 +202,22 @@ PAGE = r"""
     <input id="q" autofocus autocomplete="off"
            placeholder="Buscar: espejo corola, 212-1592, farol asx...">
     <p class="hint">Escriba como quiera. Acentos y errores de tipeo no importan.</p>
+    <details id="vehsearch"><summary>Buscar por vehículo (marca / modelo / año)</summary>
+      <div class="bar" style="margin-top:8px">
+        <select id="vmk"><option value="">Marca…</option></select>
+        <select id="vmd"><option value="">Todos los modelos</option></select>
+        <input id="vyr" type="number" placeholder="Año" style="width:100px">
+        <button class="primary" id="vgo">Buscar</button>
+      </div>
+      <p class="hint">Los datos salen de las descripciones, así que hay huecos.
+         Corrija lo que encuentre mal.</p>
+      <div id="vout"></div>
+    </details>
     <div id="heads" class="grid heads" hidden></div>
     <div id="results"></div>
   </section>
 
-  <section id="v-vehiculo" hidden>
-    <div class="bar">
-      <select id="vmk"><option value="">Marca…</option></select>
-      <select id="vmd"><option value="">Todos los modelos</option></select>
-      <input id="vyr" type="number" placeholder="Año" style="width:100px">
-      <button class="primary" id="vgo">Buscar</button>
-    </div>
-    <p class="hint">Los datos salen de las descripciones, así que hay huecos.
-       Corrija lo que encuentre mal.</p>
-    <div id="vout"></div>
-  </section>
+  <section id="v-vehiculo" hidden></section>
 
   <section id="v-traspasos" hidden>
     <h3>En tránsito</h3>
@@ -436,7 +437,7 @@ let user = {}, branches = [], rows = [], openId = null, term = '';
 let pairs = new Set(), transit = [], holds = [], vehicles = [], view = 'buscar';
 let bodegaPending = 0;
 
-const VIEWS = [['buscar','Buscar'],['vehiculo','Por vehículo'],
+const VIEWS = [['buscar','Buscar'],
                ['traspasos','Traspasos'],['reservas','Reservas'],
                ['cotizacion','Cotización'],['nota','Nota de venta'],
                ['devolucion','Devoluciones'],['recepcion','Recepción'],
@@ -558,7 +559,7 @@ function drawNav(){
 function go(v){
   view = v; drawNav();
   for (const [k] of VIEWS) $('#v-' + k).hidden = (k !== v);
-  if (v === 'vehiculo')  loadVehicles();
+  if (v === 'buscar' && !vehicles.length) loadVehicles();
   if (v === 'traspasos') drawTransit();
   if (v === 'reservas')  drawHolds();
   if (v === 'cotizacion') { drawCart(); loadQuotes(); }

@@ -369,6 +369,20 @@ def home():
     return PAGE
 
 
+@app.get("/media/{filename}")
+def media(filename: str):
+    """Serve static images from the media/ folder (the DEPO logo, etc.).
+    Only simple filenames are allowed - no path traversal."""
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(404, "No encontrado.")
+    path = Path("media") / filename
+    if not path.is_file():
+        raise HTTPException(404, "No encontrado.")
+    return FileResponse(str(path))
+
+
 # ---------------------------------------------------------------------------
 # Route modules. These import `app`, `run`, `require` etc. from this file and
 # register their own endpoints. Import order matters: pricing must load before
