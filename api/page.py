@@ -204,7 +204,6 @@ PAGE = r"""
     <p class="hint">Escriba como quiera. Acentos y errores de tipeo no importan.</p>
     <div id="heads" class="grid heads" hidden></div>
     <div id="results"></div>
-    <div id="admin"></div>
   </section>
 
   <section id="v-vehiculo" hidden>
@@ -415,6 +414,12 @@ PAGE = r"""
     <div class="msg" id="gmsg"></div>
     <div id="arch"></div>
   </section>
+
+  <section id="v-admin" hidden>
+    <h3>Administración</h3>
+    <p class="hint">Alta de productos y gestión de sucursales.</p>
+    <div id="admin"></div>
+  </section>
   </div>
 </div>
 
@@ -435,7 +440,8 @@ const VIEWS = [['buscar','Buscar'],['vehiculo','Por vehículo'],
                ['cotizacion','Cotización'],['nota','Nota de venta'],
                ['devolucion','Devoluciones'],['recepcion','Recepción'],
                ['bodega','Solicitud a bodega'],
-               ['caja','Caja'],['reportes','Reportes']];
+               ['caja','Caja'],['reportes','Reportes'],
+               ['admin','Administración']];
 
 const REASONS = [
   ['defect',       -1, 'Baja por defecto'],
@@ -524,6 +530,7 @@ function drawNav(){
     if (k === 'traspasos' && transit.length) pill = `<span class="pill">${transit.length}</span>`;
     if (k === 'reservas' && holds.length)   pill = `<span class="pill">${holds.length}</span>`;
     if (k === 'reportes' && user.role !== 'admin') return '';
+    if (k === 'admin' && user.role !== 'admin') return '';
     return `<button data-v="${k}" class="${view === k ? 'on' : ''}">${label}${pill}</button>`;
   }).join('');
   $('#nav').querySelectorAll('[data-v]').forEach(b =>
@@ -543,6 +550,7 @@ function go(v){
   if (v === 'bodega')    loadBodega('pendiente');
   if (v === 'caja')      { fillBranchSelect('#cbranch'); loadCaja(); }
   if (v === 'reportes')  drawArchive();
+  if (v === 'admin')     drawAdmin();
 }
 
 function drawFx(){
@@ -2104,7 +2112,7 @@ function drawAdmin(){
   const el = $('#admin');
   if (user.role !== 'admin') { el.innerHTML = ''; return; }
   el.innerHTML = `
-  <details><summary>Producto nuevo</summary>
+  <details open><summary>Producto nuevo</summary>
     <div class="bar">
       <input id="ntp" placeholder="Tipo: espejo, farol…" style="width:150px">
       <input id="nd" placeholder="Descripción" style="flex:2;min-width:200px">
@@ -2124,7 +2132,7 @@ function drawAdmin(){
     <div id="ndupe" class="dupe-warn" hidden></div>
     <div class="msg" id="nmsg"></div>
   </details>
-  <details><summary>Sucursales</summary>
+  <details open><summary>Sucursales</summary>
     <div id="blist"></div>
     <div class="bar">
       <input id="bn" placeholder="Nombre de la sucursal nueva"

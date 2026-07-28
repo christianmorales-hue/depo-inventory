@@ -25,10 +25,21 @@ import psycopg
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-from api.page import PAGE
 
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://depo:depo@localhost:5433/depo")
-SECRET = os.environ.get("DEPO_SECRET", "dev-only-change-me").encode()
+
+# The signing secret protects every session token. In production it MUST be set.
+# We only allow the weak dev fallback when running against a local database, so
+# a misconfigured cloud deploy can never silently ship a guessable secret.
+_secret_env = os.environ.get("DEPO_SECRET")
+if not _secret_env:
+    if "localhost" in DB_URL or "127.0.0.1" in DB_URL:
+        _secret_env = "dev-only-change-me"
+    else:
+        raise RuntimeError(
+            "DEPO_SECRET is not set. Refusing to start in production with a "
+            "default signing secret. Set DEPO_SECRET to a long random value.")
+SECRET = _secret_env.encode()
 PASSWORDS = {
     "staff": os.environ.get("DEPO_PASSWORD", "mostrador"),
     "admin": os.environ.get("DEPO_ADMIN_PASSWORD", "gerencia"),
@@ -39,12 +50,6 @@ COOKIE = "depo_session"
 
 app = FastAPI(title="DEPO")
 
-@app.middleware("http")
-async def no_cache(request, call_next):
-    response = await call_next(request)
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    return response
 
 # ----------------------------------------------------------------- database
 def run(sql, params=(), actor=None):
@@ -150,8 +155,11 @@ def login(body: Login, response: Response):
         raise HTTPException(403, "Esta cuenta está desactivada.")
 
     run("UPDATE app_user SET last_login = now() WHERE user_id = %s", (u["user_id"],))
+    # secure=True so the session cookie is only ever sent over HTTPS. We keep it
+    # off for local http dev (secure cookies won't transmit over plain http).
+    is_prod = "localhost" not in DB_URL and "127.0.0.1" not in DB_URL
     response.set_cookie(COOKIE, make_token(u["full_name"], u["role"]), httponly=True,
-                        samesite="lax", max_age=SESSION_HOURS * 3600)
+                        samesite="lax", secure=is_prod, max_age=SESSION_HOURS * 3600)
     return {"name": u["full_name"], "role": u["role"],
             "must_change": u["must_change"]}
 
@@ -167,6 +175,26 @@ def me(request: Request):
     return who(request) or {}
 
 
+# ------------------------------------------------------------------ reading
+SEARCH_SQL = """
+SELECT i.item_id, i.sku, i.part_code, i.side, i.description, i.unit_price,
+       i.is_active,
+       coalesce(json_agg(json_build_object('branch_id', b.branch_id, 'qty', s.qty))
+                FILTER (WHERE b.branch_id IS NOT NULL), '[]') AS stock
+FROM search_items(%s, 40) r
+JOIN item i ON i.item_id = r.item_id
+LEFT JOIN stock_on_hand s ON s.item_id = i.item_id AND s.condition = 'good'
+LEFT JOIN branch b ON b.branch_id = s.branch_id AND b.is_active
+GROUP BY i.item_id, r.score
+ORDER BY r.score DESC
+"""
+
+RECENT_SQL = SEARCH_SQL.replace("FROM search_items(%s, 40) r\nJOIN item i ON i.item_id = r.item_id",
+                                "FROM item i").replace("ORDER BY r.score DESC",
+                                                       "ORDER BY i.created_at DESC, i.item_id DESC LIMIT 40"
+                                                       ).replace(", r.score", "")
+
+
 @app.get("/api/branches")
 def branches(request: Request):
     show_all = who(request) and who(request)["role"] == "admin"
@@ -174,6 +202,13 @@ def branches(request: Request):
                + ("" if show_all else " WHERE is_active")
                + " ORDER BY is_real DESC, name")
 
+
+@app.get("/api/search")
+def search(q: str = ""):
+    rows = run(SEARCH_SQL, (q.strip(),)) if len(q.strip()) >= 2 else run(RECENT_SQL)
+    for r in rows:
+        r["unit_price"] = float(r["unit_price"]) if r["unit_price"] is not None else None
+    return JSONResponse(rows)
 
 
 @app.get("/api/item/{item_id}/history")
@@ -214,12 +249,10 @@ def move_stock(body: Move, request: Request):
                             f"Quedan {current} unidades; no se puede descontar "
                             f"{abs(body.qty_delta)}.")
     run("""INSERT INTO stock_movement (item_id, branch_id, qty_delta, reason,
-                                       unit_price, note, created_by)
-           SELECT %s, %s, %s, %s,
-                  CASE WHEN %s = 'sale' THEN unit_price END, %s, %s
-           FROM item WHERE item_id = %s""",
+                                       note, created_by)
+           VALUES (%s, %s, %s, %s, %s, %s)""",
         (body.item_id, body.branch_id, body.qty_delta, body.reason,
-         body.reason, body.note, user["name"], body.item_id))
+         body.note, user["name"]))
     return {"ok": True, "qty": current + body.qty_delta}
 
 
@@ -275,6 +308,28 @@ class ItemPatch(BaseModel):
     is_active: bool | None = None
 
 
+@app.patch("/api/items/{item_id}")
+def update_item(item_id: int, body: ItemPatch, request: Request):
+    user = require(request, "admin")
+    sets, vals = [], []
+    for field in ("description", "part_code", "unit_price", "is_active"):
+        value = getattr(body, field)
+        if value is not None:
+            sets.append(f"{field} = %s")
+            vals.append(value)
+    if not sets:
+        raise HTTPException(400, "Nada que cambiar.")
+    vals.append(item_id)
+    row = run(f"UPDATE item SET {', '.join(sets)} WHERE item_id = %s "
+              f"RETURNING item_id, description, part_code, unit_price, is_active",
+              tuple(vals), actor=user["name"])
+    if body.description:
+        run("""INSERT INTO item_alias (item_id, alias, source) VALUES (%s, %s, 'manual')
+               ON CONFLICT (item_id, alias) DO NOTHING""",
+            (item_id, body.description.strip()))
+    return row[0]
+
+
 class BranchIn(BaseModel):
     code: str | None = None
     name: str
@@ -313,11 +368,371 @@ def update_branch(branch_id: int, body: BranchIn, request: Request):
 def home():
     return PAGE
 
-from api import features
-from api import users
-from api import photos
-from api import reports_archive
-from api import pricing
-from api import overrides
-from api import quotes
-from api import operations
+
+PAGE = r"""
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DEPO - existencias</title>
+<style>
+  :root{--bg:#EDF0F2;--card:#FFF;--ink:#14181B;--muted:#6B757C;--line:#D3DADE;
+        --have:#0F6B3F;--none:#A7B0B6;--amber:#B45309;--focus:#1C5FA8;--warn:#A8322A;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px 16px 80px}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  h1{font-size:19px;letter-spacing:.14em;text-transform:uppercase;margin:0}
+  .sub{color:var(--muted);font-size:13px}
+  .spacer{flex:1}
+
+  input,select,button{font:inherit;color:inherit}
+  input,select{padding:9px 11px;border:1px solid var(--line);border-radius:8px;
+               background:var(--card)}
+  input:focus,select:focus,button:focus-visible{outline:2px solid var(--focus);
+               outline-offset:1px}
+  #q{width:100%;padding:15px 17px;font-size:19px;border-width:2px;border-radius:10px}
+  .hint{color:var(--muted);font-size:13px;margin:9px 2px 18px}
+
+  button{cursor:pointer;border:1px solid var(--line);background:var(--card);
+         border-radius:8px;padding:9px 13px}
+  button:hover{border-color:var(--focus)}
+  button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  button.danger{color:var(--warn)}
+  button.link{border:none;background:none;padding:4px;color:var(--focus);
+              text-decoration:underline}
+
+  .grid{display:grid;gap:12px;align-items:center}
+  .heads{padding:0 14px 7px;font-size:11px;letter-spacing:.1em;
+         text-transform:uppercase;color:var(--muted)}
+  .heads b:not(:nth-child(-n+2)){text-align:center;font-weight:inherit}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        margin-bottom:8px;overflow:hidden}
+  .row{padding:11px 14px;width:100%;text-align:left;border:none;border-radius:0;
+       background:none}
+  .row:hover{background:#F6F8F9}
+  .side{font:700 21px/1 ui-monospace,Menlo,monospace;text-align:center;padding:9px 0;
+        border-radius:7px;background:#FBF0E2;color:var(--amber)}
+  .side.no{background:#F1F4F5;color:var(--none);font-size:15px}
+  .desc{font-weight:500}
+  .code{font:13px ui-monospace,Menlo,monospace;color:var(--muted);margin-top:3px}
+  .qty{text-align:center;font:600 20px/1 ui-monospace,Menlo,monospace;color:var(--have)}
+  .qty.zero{color:var(--none);font-weight:400}
+  .off{opacity:.5}
+
+  .panel{border-top:1px solid var(--line);padding:14px;background:#F8FAFB}
+  .panel h4{margin:0 0 9px;font-size:11px;letter-spacing:.1em;
+            text-transform:uppercase;color:var(--muted)}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .bar:last-child{margin-bottom:0}
+  .hist{font-size:13px;color:var(--muted);font-family:ui-monospace,Menlo,monospace}
+  .hist div{padding:2px 0}
+  .msg{font-size:13px;min-height:18px;margin-top:10px}
+  .msg.bad{color:var(--warn)} .msg.good{color:var(--have)}
+  .empty{color:var(--muted);padding:26px 4px}
+  details{margin-top:26px;background:var(--card);border:1px solid var(--line);
+          border-radius:10px;padding:14px}
+  summary{cursor:pointer;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+          color:var(--muted)}
+  details .bar{margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DEPO</h1><span class="sub">Existencias por sucursal</span>
+    <span class="spacer"></span>
+    <span id="session"></span>
+  </header>
+
+  <input id="q" autofocus autocomplete="off"
+         placeholder="Buscar: espejo corola, 212-1592, farol asx...">
+  <p class="hint">Escriba como quiera. Acentos y errores de tipeo no importan.</p>
+
+  <div id="heads" class="grid heads" hidden></div>
+  <div id="results"></div>
+  <div id="admin"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let user = {}, branches = [], rows = [], open = null, term = '';
+
+const REASONS = [
+  ['purchase',      1, 'Ingreso (compra)'],
+  ['sale',         -1, 'Venta'],
+  ['transfer_in',   1, 'Transferencia recibida'],
+  ['transfer_out', -1, 'Transferencia enviada'],
+  ['defect',       -1, 'Baja por defecto'],
+  ['adjustment',    1, 'Corrección: sumar'],
+  ['adjustment',   -1, 'Corrección: restar'],
+];
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(path, opts) {
+  const res = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || 'Error inesperado');
+  return body;
+}
+
+// -------------------------------------------------------------------- boot
+(async function start(){
+  user = await api('/api/me');
+  await loadBranches();
+  drawSession();
+  await search();
+})();
+
+async function loadBranches(){
+  branches = (await api('/api/branches')).filter(b => b.is_real);
+}
+
+function cols(){
+  return `44px minmax(0,1fr) ${branches.map(() => '78px').join(' ')}`;
+}
+
+// ----------------------------------------------------------------- session
+function drawSession(){
+  const el = $('#session');
+  if (user.name) {
+    el.innerHTML = `<span class="sub">${esc(user.name)} ·
+      ${user.role === 'admin' ? 'gerencia' : 'mostrador'}</span>
+      <button class="link" id="out">salir</button>`;
+    $('#out').onclick = async () => {
+      await api('/api/logout', {method:'POST'}); user = {}; drawSession(); draw(); drawAdmin();
+    };
+  } else {
+    el.innerHTML = `<input id="nm" placeholder="Usuario" size="9" autocapitalize="off">
+      <input id="pw" type="password" placeholder="Clave" size="10">
+      <button id="in">Entrar</button> <span class="msg bad" id="lerr"></span>`;
+    $('#in').onclick = doLogin;
+    $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+  }
+  drawAdmin();
+}
+
+async function doLogin(){
+  try {
+    user = await api('/api/login', {method:'POST', body: JSON.stringify(
+      {username: $('#nm').value, password: $('#pw').value})});
+    drawSession(); draw();
+  } catch (e) { $('#lerr').textContent = e.message; }
+}
+
+// ------------------------------------------------------------------ search
+$('#q').addEventListener('input', () => {
+  clearTimeout(window.t); window.t = setTimeout(search, 220);
+});
+
+async function search(){
+  term = $('#q').value.trim();
+  rows = await api('/api/search?q=' + encodeURIComponent(term));
+  open = null;
+  draw();
+}
+
+function draw(){
+  const heads = $('#heads'), out = $('#results');
+  heads.hidden = rows.length === 0;
+  heads.style.gridTemplateColumns = cols();
+  heads.innerHTML = `<b>Lado</b><b>Producto</b>` +
+    branches.map(b => `<b>${esc(b.name)}</b>`).join('');
+
+  if (!rows.length) {
+    out.innerHTML = '<p class="empty">Sin resultados. Pruebe con menos palabras.</p>';
+    return;
+  }
+  out.innerHTML = '';
+  for (const r of rows) {
+    const qty = id => (r.stock.find(s => s.branch_id === id) || {}).qty || 0;
+    const card = document.createElement('div');
+    card.className = 'card' + (r.is_active ? '' : ' off');
+    const btn = document.createElement('button');
+    btn.className = 'row grid';
+    btn.style.gridTemplateColumns = cols();
+    btn.innerHTML =
+      `<div class="side ${r.side ? '' : 'no'}">${r.side || '—'}</div>
+       <div><div class="desc">${esc(r.description)}</div>
+         <div class="code">${esc(r.part_code || 'sin código')}` +
+        (r.unit_price != null ? ` · Bs ${r.unit_price}` : '') +
+        (r.is_active ? '' : ' · inactivo') + `</div></div>` +
+      branches.map(b => {
+        const q = qty(b.branch_id);
+        return `<div class="qty ${q ? '' : 'zero'}">${q || '—'}</div>`;
+      }).join('');
+    btn.onclick = () => { open = open === r.item_id ? null : r.item_id; draw();
+                          if (term.length > 2) learn(r.item_id); };
+    card.appendChild(btn);
+    if (open === r.item_id) card.appendChild(panel(r));
+    out.appendChild(card);
+  }
+}
+
+function learn(item_id){
+  api('/api/alias', {method:'POST', body: JSON.stringify({item_id, alias: term})})
+    .catch(() => {});
+}
+
+// ------------------------------------------------------------ detail panel
+function panel(r){
+  const p = document.createElement('div');
+  p.className = 'panel';
+
+  if (!user.name) {
+    p.innerHTML = '<p class="sub">Inicie sesión para registrar movimientos.</p>';
+    return p;
+  }
+
+  p.innerHTML = `<h4>Registrar movimiento</h4>
+    <div class="bar">
+      <select id="mb">${branches.map(b =>
+        `<option value="${b.branch_id}">${esc(b.name)}</option>`).join('')}</select>
+      <select id="mr">${REASONS.map(([v,s,l],i) =>
+        `<option value="${i}">${l}</option>`).join('')}</select>
+      <input id="mq" type="number" min="1" value="1" style="width:80px">
+      <input id="mn" placeholder="Nota (opcional)" style="flex:1;min-width:140px">
+      <button class="primary" id="mgo">Guardar</button>
+    </div>
+    <div class="msg" id="mmsg"></div>
+    <h4>Últimos movimientos</h4><div class="hist" id="mh">cargando…</div>`;
+
+  p.querySelector('#mgo').onclick = async () => {
+    const [reason, sign] = REASONS[p.querySelector('#mr').value];
+    const n = Math.abs(parseInt(p.querySelector('#mq').value, 10) || 0);
+    const msg = p.querySelector('#mmsg');
+    try {
+      const res = await api('/api/stock/move', {method:'POST', body: JSON.stringify({
+        item_id: r.item_id, branch_id: +p.querySelector('#mb').value,
+        qty_delta: sign * n, reason, note: p.querySelector('#mn').value || null})});
+      msg.className = 'msg good';
+      msg.textContent = `Guardado. Quedan ${res.qty} unidades.`;
+      rows = await api('/api/search?q=' + encodeURIComponent(term)); draw();
+    } catch (e) { msg.className = 'msg bad'; msg.textContent = e.message; }
+  };
+
+  api('/api/item/' + r.item_id + '/history').then(h => {
+    const el = p.querySelector('#mh');
+    if (!el) return;
+    el.innerHTML = h.length ? h.map(m =>
+      `<div>${m.occurred_at.slice(0,10)} · ${esc(m.branch)} ·
+       ${m.qty_delta > 0 ? '+' : ''}${m.qty_delta} · ${m.reason} ·
+       ${esc(m.created_by || '')}</div>`).join('') : '<div>sin movimientos</div>';
+  }).catch(() => {});
+
+  if (user.role === 'admin') {
+    const ed = document.createElement('div');
+    ed.innerHTML = `<h4 style="margin-top:16px">Editar producto (gerencia)</h4>
+      <div class="bar">
+        <input id="ed" value="${esc(r.description)}" style="flex:2;min-width:200px">
+        <input id="ec" value="${esc(r.part_code || '')}" placeholder="Código"
+               style="width:140px">
+        <input id="ep" type="number" step="0.01" value="${r.unit_price ?? ''}"
+               placeholder="Bs" style="width:100px">
+        <button class="primary" id="ego">Guardar</button>
+        <button class="danger" id="etog">${r.is_active ? 'Desactivar' : 'Reactivar'}</button>
+      </div>
+      <div class="msg" id="emsg"></div>`;
+    p.appendChild(ed);
+    const save = async body => {
+      const msg = ed.querySelector('#emsg');
+      try {
+        await api('/api/items/' + r.item_id, {method:'PATCH', body: JSON.stringify(body)});
+        msg.className = 'msg good'; msg.textContent = 'Guardado.';
+        rows = await api('/api/search?q=' + encodeURIComponent(term)); draw();
+      } catch (e) { msg.className = 'msg bad'; msg.textContent = e.message; }
+    };
+    ed.querySelector('#ego').onclick = () => save({
+      description: ed.querySelector('#ed').value,
+      part_code: ed.querySelector('#ec').value || null,
+      unit_price: parseFloat(ed.querySelector('#ep').value) || null});
+    ed.querySelector('#etog').onclick = () => save({is_active: !r.is_active});
+  }
+  return p;
+}
+
+// ------------------------------------------------------------- admin panel
+function drawAdmin(){
+  const el = $('#admin');
+  if (user.role !== 'admin') { el.innerHTML = ''; return; }
+  el.innerHTML = `
+  <details>
+    <summary>Producto nuevo</summary>
+    <div class="bar">
+      <input id="nd" placeholder="Descripción" style="flex:2;min-width:220px">
+      <input id="nc" placeholder="Código" style="width:150px">
+      <select id="ns"><option value="">sin lado</option><option>L</option><option>R</option></select>
+      <input id="np" type="number" step="0.01" placeholder="Bs" style="width:100px">
+      <button class="primary" id="ngo">Crear</button>
+    </div>
+    <div class="msg" id="nmsg"></div>
+  </details>
+  <details>
+    <summary>Sucursales</summary>
+    <div id="blist"></div>
+    <div class="bar">
+      <input id="bn" placeholder="Nombre de la sucursal nueva" style="flex:1;min-width:200px">
+      <button class="primary" id="bgo">Agregar</button>
+    </div>
+    <div class="msg" id="bmsg"></div>
+  </details>`;
+
+  $('#ngo').onclick = async () => {
+    const msg = $('#nmsg');
+    try {
+      await api('/api/items', {method:'POST', body: JSON.stringify({
+        description: $('#nd').value, part_code: $('#nc').value || null,
+        side: $('#ns').value || null,
+        unit_price: parseFloat($('#np').value) || null})});
+      msg.className = 'msg good'; msg.textContent = 'Producto creado.';
+      $('#nd').value = $('#nc').value = $('#np').value = '';
+      await search();
+    } catch (e) { msg.className = 'msg bad'; msg.textContent = e.message; }
+  };
+
+  renderBranches();
+  $('#bgo').onclick = async () => {
+    const msg = $('#bmsg');
+    try {
+      await api('/api/branches', {method:'POST',
+        body: JSON.stringify({name: $('#bn').value})});
+      $('#bn').value = '';
+      msg.className = 'msg good'; msg.textContent = 'Sucursal agregada.';
+      await loadBranches(); renderBranches(); draw();
+    } catch (e) { msg.className = 'msg bad'; msg.textContent = e.message; }
+  };
+}
+
+async function renderBranches(){
+  const all = await api('/api/branches');
+  const box = $('#blist');
+  if (!box) return;
+  box.innerHTML = all.filter(b => b.is_real).map(b => `
+    <div class="bar">
+      <input value="${esc(b.name)}" data-id="${b.branch_id}" class="bname"
+             style="flex:1;min-width:180px">
+      <button class="bsave" data-id="${b.branch_id}">Renombrar</button>
+      <button class="danger btog" data-id="${b.branch_id}" data-on="${b.is_active}">
+        ${b.is_active ? 'Desactivar' : 'Reactivar'}</button>
+    </div>`).join('');
+
+  const patch = async (id, body) => {
+    try {
+      await api('/api/branches/' + id, {method:'PATCH', body: JSON.stringify(body)});
+      await loadBranches(); renderBranches(); draw();
+    } catch (e) { $('#bmsg').className = 'msg bad'; $('#bmsg').textContent = e.message; }
+  };
+  box.querySelectorAll('.bsave').forEach(b => b.onclick = () => patch(b.dataset.id,
+    {name: box.querySelector(`.bname[data-id="${b.dataset.id}"]`).value}));
+  box.querySelectorAll('.btog').forEach(b => b.onclick = () => patch(b.dataset.id,
+    {name: box.querySelector(`.bname[data-id="${b.dataset.id}"]`).value,
+     is_active: b.dataset.on !== 'true'}));
+}
+</script>
+</body>
+</html>
+"""
