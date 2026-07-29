@@ -1531,6 +1531,20 @@ function ntotal(){
   $('#ntotal').innerHTML = `<b>Total: Bs ${t.toFixed(2)}</b>`;
 }
 
+// Describes how a nota is delivered, so it's obvious why the Etiqueta button
+// is or isn't offered. A pickup needs no label; missing data is a real gap.
+function entregaLabel(q){
+  const m = q.fulfillment_method;
+  if (m === 'recojo')
+    return 'Recojo en ' + esc(q.pickup_branch || 'tienda') + ' (sin etiqueta)';
+  if (m === 'entrega')
+    return 'Entrega a domicilio · ' + esc(q.fulfillment_city || '');
+  if (m === 'envio')
+    return 'Envío ' + esc(q.fulfillment_transport || '') + ' · '
+         + esc(q.fulfillment_city || '');
+  return '<span class="flag">sin datos de entrega</span>';
+}
+
 async function loadSales(){
   const box = $('#nlist');
   const list = await api('/api/sales');
@@ -1540,13 +1554,16 @@ async function loadSales(){
         <div class="desc">Nota Nº ${q.quote_number} · ${esc(q.customer)}${
           q.cancelled?' <span class="flag">ANULADA</span>':''}</div>
         <div class="code">${q.fecha} · ${q.lineas} productos · Bs ${
-          (q.total_bob||0).toFixed(2)}</div>
+          (q.total_bob||0).toFixed(2)} · ${entregaLabel(q)}</div>
       </div>
       <button data-nver="${q.quote_id}">Ver</button>
       <button data-npdf="${q.quote_id}">PDF</button>
       <button data-npng="${q.quote_id}">PNG</button>
       ${(q.fulfillment_method === 'entrega' || q.fulfillment_method === 'envio')
         ? `<button data-nlabel="${q.quote_id}">Etiqueta</button>` : ''}
+      ${(!q.fulfillment_method && !q.cancelled)
+        ? `<button data-nful="${q.quote_id}" data-num="${q.quote_number}"
+             >Completar entrega</button>` : ''}
       ${q.cancelled ? '' :
         `<button data-nedit="${q.quote_id}" data-num="${q.quote_number}">Editar</button>`}
       <button class="wa" data-nwa='${JSON.stringify(
@@ -1558,6 +1575,8 @@ async function loadSales(){
     </div></div>`).join('') : '<p class="empty">Aún no hay notas de venta.</p>';
   box.querySelectorAll('[data-nlabel]').forEach(b => b.onclick = () =>
     downloadDoc('/api/sales/' + b.dataset.nlabel + '/label', 'etiqueta.pdf'));
+  box.querySelectorAll('[data-nful]').forEach(b => b.onclick = () =>
+    openFulfillmentModal(+b.dataset.nful, +b.dataset.num));
   box.querySelectorAll('[data-nver]').forEach(b => b.onclick = () =>
     showNotaDetail(+b.dataset.nver));
   box.querySelectorAll('[data-npdf]').forEach(b => b.onclick = () =>
@@ -1631,7 +1650,9 @@ $('#ngo2').onclick = () => {
   openFulfillmentModal();
 };
 
-async function openFulfillmentModal(){
+async function openFulfillmentModal(existingSaleId, existingNumber){
+  // With no arguments this creates a new nota. Passing an id instead
+  // attaches delivery data to a nota that is missing it.
   let cities = [];
   try { cities = await api('/api/cities'); } catch (e) { cities = []; }
   const cityOpts = cities.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
@@ -1726,30 +1747,58 @@ async function openFulfillmentModal(){
       ful.company = modal.querySelector('#ful-s-company').value;
       ful.payment = modal.querySelector('#ful-s-payment').value;
     }
+    // Step 1 - create the nota (skipped when completing an existing one).
+    let r;
+    if (existingSaleId) {
+      r = {sale_id: existingSaleId, sale_number: existingNumber};
+    } else {
+      try {
+        // Create the nota as HELD - stock deducts only when bodega confirms.
+        r = await api('/api/sales', {method:'POST', body: JSON.stringify({
+          customer: $('#nn').value, customer_nit: $('#nni').value || null,
+          customer_phone: $('#nph').value || null, hold: true,
+          lines: ncart.map(c => ({item_id: c.item_id, branch_id: c.branch_id,
+                                  qty: c.qty, discount: c.discount || 0}))})});
+      } catch (e) { fm.className = 'msg bad'; fm.textContent = e.message; return; }
+    }
+
+    // Step 2 - save delivery data. The nota already exists and is holding
+    // stock, so if this fails we must say so instead of failing silently:
+    // without it there is no bodega request and the stock stays held.
     try {
-      // Create the nota as HELD - stock deducts only when bodega confirms.
-      const r = await api('/api/sales', {method:'POST', body: JSON.stringify({
-        customer: $('#nn').value, customer_nit: $('#nni').value || null,
-        customer_phone: $('#nph').value || null, hold: true,
-        lines: ncart.map(c => ({item_id: c.item_id, branch_id: c.branch_id,
-                                qty: c.qty, discount: c.discount || 0}))})});
       await api('/api/notas/' + r.sale_id + '/fulfillment',
                 {method:'POST', body: JSON.stringify(ful)});
+    } catch (e) {
+      fm.className = 'msg bad';
+      fm.textContent = `La nota Nº ${r.sale_number} se creó, pero NO se `
+        + `guardaron los datos de entrega (${e.message}). Use "Completar `
+        + `entrega" en la lista de notas para terminarla.`;
+      loadSales(); refreshBadges();
+      return;
+    }
+
+    try {
       closeModal();
       const msg = $('#nmsg2');
       msg.className = 'msg good';
-      msg.innerHTML = `Nota Nº ${r.sale_number} creada y enviada a bodega. `
-        + `El stock se descontará al confirmarse.`
+      msg.innerHTML = (existingSaleId
+          ? `Datos de entrega guardados para la nota Nº ${r.sale_number}. `
+          : `Nota Nº ${r.sale_number} creada y enviada a bodega. `
+            + `El stock se descontará al confirmarse.`)
         + ((method === 'entrega' || method === 'envio')
             ? ` <button id="nlabel-now" style="margin-left:8px">Imprimir etiqueta</button>`
             : '');
       const lb = document.getElementById('nlabel-now');
       if (lb) lb.onclick = () =>
         downloadDoc('/api/sales/' + r.sale_id + '/label', 'etiqueta.pdf');
-      await sendWaSale({sale_id: r.sale_id, phone: $('#nph').value,
-                        customer: $('#nn').value, number: r.sale_number});
-      ncart = []; drawNCart();
-      $('#nn').value = $('#nni').value = ''; $('#nph').value = '591';
+      if (!existingSaleId) {
+        await sendWaSale({sale_id: r.sale_id, phone: $('#nph').value,
+                          customer: $('#nn').value, number: r.sale_number});
+      }
+      if (!existingSaleId) {
+        ncart = []; drawNCart();
+        $('#nn').value = $('#nni').value = ''; $('#nph').value = '591';
+      }
       loadSales(); refreshBadges();
     } catch (e) { fm.textContent = e.message; }
   };

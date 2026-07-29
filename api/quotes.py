@@ -556,10 +556,14 @@ def cancel_sale(sale_id: int, request: Request):
 def list_sales(request: Request):
     require(request)
     rows = run("""SELECT v.*, q.cancelled_at, q.cancelled_by,
-                         f.method AS fulfillment_method
+                         f.method AS fulfillment_method,
+                         f.city   AS fulfillment_city,
+                         f.transport AS fulfillment_transport,
+                         fb.name  AS pickup_branch
                   FROM v_quotes v
                   JOIN quote q USING (quote_id)
                   LEFT JOIN nota_fulfillment f ON f.quote_id = q.quote_id
+                  LEFT JOIN branch fb ON fb.branch_id = f.branch_id
                   WHERE q.note LIKE '%%[NOTA_DE_VENTA]%%'
                   ORDER BY v.quote_number DESC
                   LIMIT 100""")
