@@ -176,39 +176,12 @@ def me(request: Request):
 
 
 # ------------------------------------------------------------------ reading
-SEARCH_SQL = """
-SELECT i.item_id, i.sku, i.part_code, i.side, i.description, i.unit_price,
-       i.is_active,
-       coalesce(json_agg(json_build_object('branch_id', b.branch_id, 'qty', s.qty))
-                FILTER (WHERE b.branch_id IS NOT NULL), '[]') AS stock
-FROM search_items(%s, 40) r
-JOIN item i ON i.item_id = r.item_id
-LEFT JOIN stock_on_hand s ON s.item_id = i.item_id AND s.condition = 'good'
-LEFT JOIN branch b ON b.branch_id = s.branch_id AND b.is_active
-GROUP BY i.item_id, r.score
-ORDER BY r.score DESC
-"""
-
-RECENT_SQL = SEARCH_SQL.replace("FROM search_items(%s, 40) r\nJOIN item i ON i.item_id = r.item_id",
-                                "FROM item i").replace("ORDER BY r.score DESC",
-                                                       "ORDER BY i.created_at DESC, i.item_id DESC LIMIT 40"
-                                                       ).replace(", r.score", "")
-
-
 @app.get("/api/branches")
 def branches(request: Request):
     show_all = who(request) and who(request)["role"] == "admin"
     return run("SELECT branch_id, code, name, is_active, is_real FROM branch"
                + ("" if show_all else " WHERE is_active")
                + " ORDER BY is_real DESC, name")
-
-
-@app.get("/api/search")
-def search(q: str = ""):
-    rows = run(SEARCH_SQL, (q.strip(),)) if len(q.strip()) >= 2 else run(RECENT_SQL)
-    for r in rows:
-        r["unit_price"] = float(r["unit_price"]) if r["unit_price"] is not None else None
-    return JSONResponse(rows)
 
 
 @app.get("/api/item/{item_id}/history")
@@ -222,40 +195,6 @@ def history(item_id: int, request: Request):
 
 
 # ------------------------------------------------------------- staff writes
-class Move(BaseModel):
-    item_id: int
-    branch_id: int
-    qty_delta: int
-    reason: str
-    note: str | None = None
-
-
-ALLOWED_REASONS = {"purchase", "sale", "transfer_in", "transfer_out",
-                   "adjustment", "defect"}
-
-
-@app.post("/api/stock/move")
-def move_stock(body: Move, request: Request):
-    user = require(request)
-    if body.qty_delta == 0:
-        raise HTTPException(400, "La cantidad no puede ser cero.")
-    if body.reason not in ALLOWED_REASONS:
-        raise HTTPException(400, "Motivo no válido.")
-    current = run("""SELECT coalesce(sum(qty_delta), 0) AS q FROM stock_movement
-                     WHERE item_id = %s AND branch_id = %s AND condition = 'good'""",
-                  (body.item_id, body.branch_id))[0]["q"]
-    if current + body.qty_delta < 0:
-        raise HTTPException(400,
-                            f"Quedan {current} unidades; no se puede descontar "
-                            f"{abs(body.qty_delta)}.")
-    run("""INSERT INTO stock_movement (item_id, branch_id, qty_delta, reason,
-                                       note, created_by)
-           VALUES (%s, %s, %s, %s, %s, %s)""",
-        (body.item_id, body.branch_id, body.qty_delta, body.reason,
-         body.note, user["name"]))
-    return {"ok": True, "qty": current + body.qty_delta}
-
-
 class AliasIn(BaseModel):
     item_id: int
     alias: str
@@ -271,65 +210,6 @@ def remember_alias(a: AliasIn):
 
 
 # ------------------------------------------------------------- admin writes
-class ItemIn(BaseModel):
-    description: str
-    part_code: str | None = None
-    side: str | None = None
-    unit_price: float | None = None
-
-
-@app.post("/api/items")
-def create_item(body: ItemIn, request: Request):
-    user = require(request, "admin")
-    if len(body.description.strip()) < 3:
-        raise HTTPException(400, "La descripción es obligatoria.")
-    side = (body.side or "").upper() or None
-    if side not in (None, "L", "R"):
-        raise HTTPException(400, "El lado debe ser L, R o vacío.")
-    code = (body.part_code or "").strip() or None
-    base = code.rsplit("-", 1)[0] if code and side and code.upper().endswith(
-        ("-L", "-R")) else code
-    row = run("""INSERT INTO item (sku, part_code, base_code, side, description,
-                                   unit_price)
-                 VALUES ('DEPO-' || lpad(nextval('item_item_id_seq')::text, 5, '0'),
-                         %s, %s, %s, %s, %s)
-                 RETURNING item_id, sku""",
-              (code, base, side, body.description.strip(), body.unit_price),
-              actor=user["name"])[0]
-    run("INSERT INTO item_alias (item_id, alias, source) VALUES (%s, %s, 'manual')",
-        (row["item_id"], body.description.strip()))
-    return row
-
-
-class ItemPatch(BaseModel):
-    description: str | None = None
-    part_code: str | None = None
-    unit_price: float | None = None
-    is_active: bool | None = None
-
-
-@app.patch("/api/items/{item_id}")
-def update_item(item_id: int, body: ItemPatch, request: Request):
-    user = require(request, "admin")
-    sets, vals = [], []
-    for field in ("description", "part_code", "unit_price", "is_active"):
-        value = getattr(body, field)
-        if value is not None:
-            sets.append(f"{field} = %s")
-            vals.append(value)
-    if not sets:
-        raise HTTPException(400, "Nada que cambiar.")
-    vals.append(item_id)
-    row = run(f"UPDATE item SET {', '.join(sets)} WHERE item_id = %s "
-              f"RETURNING item_id, description, part_code, unit_price, is_active",
-              tuple(vals), actor=user["name"])
-    if body.description:
-        run("""INSERT INTO item_alias (item_id, alias, source) VALUES (%s, %s, 'manual')
-               ON CONFLICT (item_id, alias) DO NOTHING""",
-            (item_id, body.description.strip()))
-    return row[0]
-
-
 class BranchIn(BaseModel):
     code: str | None = None
     name: str
