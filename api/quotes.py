@@ -555,9 +555,11 @@ def cancel_sale(sale_id: int, request: Request):
 @app.get("/api/sales")
 def list_sales(request: Request):
     require(request)
-    rows = run("""SELECT v.*, q.cancelled_at, q.cancelled_by
+    rows = run("""SELECT v.*, q.cancelled_at, q.cancelled_by,
+                         f.method AS fulfillment_method
                   FROM v_quotes v
                   JOIN quote q USING (quote_id)
+                  LEFT JOIN nota_fulfillment f ON f.quote_id = q.quote_id
                   WHERE q.note LIKE '%%[NOTA_DE_VENTA]%%'
                   ORDER BY v.quote_number DESC
                   LIMIT 100""")
@@ -597,3 +599,162 @@ def download_sale_pdf(sale_id: int, request: Request):
                         "Cache-Control": "no-store",
                         "X-Content-Type-Options": "nosniff",
                     })
+
+
+# ====================================================== shipping label (etiqueta)
+def build_label(sale_id: int) -> bytes:
+    """A printable label for the box: big destination, transport details and a
+    clear PAGADO / POR PAGAR mark. Only makes sense for entrega/envío - a store
+    pickup doesn't travel anywhere."""
+    q = run("""SELECT quote_id, quote_number, customer, customer_phone
+               FROM quote WHERE quote_id = %s""", (sale_id,))
+    if not q:
+        raise HTTPException(404, "Nota de venta no encontrada.")
+    q = q[0]
+
+    f = run("""SELECT f.*, b.name AS pickup_branch
+               FROM nota_fulfillment f
+               LEFT JOIN branch b ON b.branch_id = f.branch_id
+               WHERE f.quote_id = %s""", (sale_id,))
+    if not f:
+        raise HTTPException(400, "Esta nota no tiene datos de entrega.")
+    f = f[0]
+    if f["method"] == "recojo":
+        raise HTTPException(400,
+            "Recojo en tienda: no se necesita etiqueta de envío.")
+
+    shop = shop_info()
+    lines_n = run("SELECT count(*) AS n FROM quote_line WHERE quote_id = %s",
+                  (sale_id,))[0]["n"]
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=LETTER)
+    W, H = LETTER
+    M = 14 * mm
+    y = H - M
+
+    # ---- outer border so the label can be cut out cleanly -----------------
+    c.setLineWidth(2)
+    c.rect(M - 4 * mm, M - 4 * mm, W - 2 * M + 8 * mm, H - 2 * M + 8 * mm)
+
+    # ---- header: who is sending -------------------------------------------
+    logo = Path("media/logo.png")
+    if logo.is_file():
+        try:
+            c.drawImage(str(logo), M, y - 18 * mm, width=30 * mm, height=18 * mm,
+                        preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+    c.setFont("Helvetica-Bold", 15)
+    c.drawRightString(W - M, y - 6 * mm, shop["name"])
+    c.setFont("Helvetica", 10)
+    if shop["phone"]:
+        c.drawRightString(W - M, y - 12 * mm, f"Tel: {shop['phone']}")
+    c.drawRightString(W - M, y - 17 * mm, f"Nota de venta Nº {q['quote_number']}")
+
+    y -= 26 * mm
+    c.setLineWidth(1)
+    c.line(M, y, W - M, y)
+
+    # ---- destination: the part that matters on a loading dock -------------
+    y -= 12 * mm
+    c.setFont("Helvetica", 11)
+    c.setFillColor(colors.HexColor("#6B757C"))
+    c.drawString(M, y, "DESTINATARIO")
+    c.setFillColor(colors.black)
+
+    y -= 12 * mm
+    c.setFont("Helvetica-Bold", 24)
+    recipient = (f["recipient"] or q["customer"] or "-")[:38]
+    c.drawString(M, y, recipient)
+
+    y -= 16 * mm
+    c.setFont("Helvetica", 11)
+    c.setFillColor(colors.HexColor("#6B757C"))
+    c.drawString(M, y, "CIUDAD")
+    c.setFillColor(colors.black)
+    y -= 15 * mm
+    c.setFont("Helvetica-Bold", 34)          # biggest thing on the page
+    c.drawString(M, y, (f["city"] or "-").upper()[:22])
+
+    # ---- method-specific block --------------------------------------------
+    y -= 18 * mm
+    body = ParagraphStyle("lbl", fontName="Helvetica", fontSize=14, leading=18)
+
+    if f["method"] == "entrega":
+        c.setFont("Helvetica", 11)
+        c.setFillColor(colors.HexColor("#6B757C"))
+        c.drawString(M, y, "DIRECCIÓN DE ENTREGA")
+        c.setFillColor(colors.black)
+        y -= 4 * mm
+        p = Paragraph((f["address"] or "-"), body)
+        _, h = p.wrap(W - 2 * M, 40 * mm)
+        p.drawOn(c, M, y - h)
+        y -= h + 8 * mm
+        if f["dropoff_date"]:
+            c.setFont("Helvetica-Bold", 13)
+            c.drawString(M, y, f"Fecha de entrega: {f['dropoff_date']}")
+            y -= 10 * mm
+    else:  # envío por bus / avión
+        transporte = "AVIÓN" if (f["transport"] or "") == "avion" else "BUS"
+        c.setFont("Helvetica", 11)
+        c.setFillColor(colors.HexColor("#6B757C"))
+        c.drawString(M, y, "ENVÍO POR")
+        c.setFillColor(colors.black)
+        y -= 12 * mm
+        c.setFont("Helvetica-Bold", 22)
+        c.drawString(M, y, transporte)
+        y -= 14 * mm
+        c.setFont("Helvetica", 11)
+        c.setFillColor(colors.HexColor("#6B757C"))
+        c.drawString(M, y, "EMPRESA DE TRANSPORTE")
+        c.setFillColor(colors.black)
+        y -= 12 * mm
+        c.setFont("Helvetica-Bold", 20)
+        c.drawString(M, y, (f["company"] or "-")[:34])
+        y -= 14 * mm
+
+    # ---- phone -------------------------------------------------------------
+    phone = q["customer_phone"] or ""
+    if phone:
+        c.setFont("Helvetica", 13)
+        c.drawString(M, y, f"Teléfono: {phone}")
+        y -= 12 * mm
+
+    # ---- payment status: big, boxed, impossible to miss --------------------
+    if f["method"] == "envio":
+        pagado = (f["payment"] or "") == "pagado"
+        label = "PAGADO" if pagado else "POR PAGAR"
+        tone = colors.HexColor("#0F6B3F") if pagado else colors.HexColor("#A8322A")
+        box_h = 20 * mm
+        box_y = max(M + 26 * mm, y - box_h)
+        c.setStrokeColor(tone)
+        c.setLineWidth(3)
+        c.rect(M, box_y, W - 2 * M, box_h, stroke=1, fill=0)
+        c.setFillColor(tone)
+        c.setFont("Helvetica-Bold", 30)
+        c.drawCentredString(W / 2, box_y + 6 * mm, label)
+        c.setFillColor(colors.black)
+        c.setStrokeColor(colors.black)
+
+    # ---- footer ------------------------------------------------------------
+    c.setFont("Helvetica", 10)
+    c.setFillColor(colors.HexColor("#6B757C"))
+    c.drawString(M, M + 8 * mm, f"{lines_n} producto(s) · Nota Nº {q['quote_number']}")
+    c.drawRightString(W - M, M + 8 * mm,
+                      datetime.now().strftime("Emitido %Y-%m-%d %H:%M"))
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+@app.get("/api/sales/{sale_id}/label")
+def download_label(sale_id: int, request: Request):
+    require(request)
+    pdf = build_label(sale_id)
+    q = run("SELECT quote_number FROM quote WHERE quote_id = %s", (sale_id,))
+    n = q[0]["quote_number"] if q else sale_id
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="etiqueta_{n:04d}.pdf"'})

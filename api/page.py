@@ -169,6 +169,10 @@ PAGE = r"""
  .nota-view th{color:var(--muted);font-weight:600}
  .nota-view td.num,.nota-view th.num{text-align:right}
  .nota-view .tot{text-align:right;font-size:16px;font-weight:700;margin-top:10px}
+ .quickprice{background:color-mix(in srgb, var(--focus) 8%, var(--card));
+        border:1px solid color-mix(in srgb, var(--focus) 35%, var(--line));
+        border-radius:9px;padding:9px 11px;margin-bottom:10px;align-items:center}
+ .quickprice b{font-size:13px}
  .ful-tabs{display:flex;gap:6px;margin:12px 0}
  .ful-tab{flex:1;padding:10px;border:1px solid var(--line);border-radius:8px;
         background:var(--card);color:var(--muted);cursor:pointer;font-size:13px}
@@ -299,6 +303,15 @@ PAGE = r"""
 
     <h3 style="margin-top:26px">Notas de venta anteriores</h3>
     <div id="nlist" class="list"></div>
+
+    <h3 style="margin-top:30px">Solicitudes a bodega</h3>
+    <p class="hint">Pedidos esperando preparación y confirmación de bodega.
+      El stock se descuenta al confirmar.</p>
+    <div class="bar">
+      <button id="bod-pend" class="on">Pendientes</button>
+      <button id="bod-all">Todas</button>
+    </div>
+    <div id="bodlist" class="list" style="margin-top:12px"></div>
   </section>
 
   <section id="v-devolucion" hidden>
@@ -352,17 +365,6 @@ PAGE = r"""
     <div class="msg" id="rmsg2"></div>
     <h3 style="margin-top:26px">Recepciones anteriores</h3>
     <div id="rlist" class="list"></div>
-  </section>
-
-  <section id="v-bodega" hidden>
-    <h3>Solicitud a bodega</h3>
-    <p class="hint">Pedidos de nota de venta esperando preparación y confirmación
-      de bodega. El stock se descuenta al confirmar.</p>
-    <div class="bar">
-      <button id="bod-pend" class="on">Pendientes</button>
-      <button id="bod-all">Todas</button>
-    </div>
-    <div id="bodlist" class="list" style="margin-top:12px"></div>
   </section>
 
   <section id="v-caja" hidden>
@@ -441,7 +443,6 @@ const VIEWS = [['buscar','Buscar'],
                ['traspasos','Traspasos'],['reservas','Reservas'],
                ['cotizacion','Cotización'],['nota','Nota de venta'],
                ['devolucion','Devoluciones'],['recepcion','Recepción'],
-               ['bodega','Solicitud a bodega'],
                ['caja','Caja'],['reportes','Reportes'],
                ['admin','Administración']];
 
@@ -547,7 +548,7 @@ function drawNav(){
     let pill = '';
     if (k === 'traspasos' && transit.length) pill = `<span class="pill">${transit.length}</span>`;
     if (k === 'reservas' && holds.length)   pill = `<span class="pill">${holds.length}</span>`;
-    if (k === 'bodega' && bodegaPending)    pill = `<span class="pill">${bodegaPending}</span>`;
+    if (k === 'nota' && bodegaPending)      pill = `<span class="pill">${bodegaPending}</span>`;
     if (k === 'reportes' && user.role !== 'admin') return '';
     if (k === 'admin' && user.role !== 'admin') return '';
     return `<button data-v="${k}" class="${view === k ? 'on' : ''}">${label}${pill}</button>`;
@@ -563,10 +564,9 @@ function go(v){
   if (v === 'traspasos') drawTransit();
   if (v === 'reservas')  drawHolds();
   if (v === 'cotizacion') { drawCart(); loadQuotes(); }
-  if (v === 'nota')      { drawNCart(); loadSales(); }
+  if (v === 'nota')      { drawNCart(); loadSales(); loadBodega('pendiente'); }
   if (v === 'devolucion') { drawDCart(); loadDevoluciones(); }
   if (v === 'recepcion') { fillBranchSelect('#rbranch'); drawRCart(); loadRecepciones(); }
-  if (v === 'bodega')    loadBodega('pendiente');
   if (v === 'caja')      { fillBranchSelect('#cbranch'); loadCaja(); }
   if (v === 'reportes')  drawArchive();
   if (v === 'admin')     drawAdmin();
@@ -832,6 +832,14 @@ function panel(r){
   if (user.role === 'admin') {
     const ed = document.createElement('div');
     ed.innerHTML = `<h4>Editar producto (gerencia)</h4>
+      <div class="bar quickprice">
+        <b>Cambiar precio:</b>
+        <input id="qp" type="number" step="0.01" value="${r.price_usd ?? ''}"
+               placeholder="USD" style="width:120px">
+        <span class="sub">USD</span>
+        <button class="primary" id="qpgo">Guardar precio</button>
+        <span class="sub" id="qpbs"></span>
+      </div>
       <div class="bar">
         <input id="ed" value="${esc(r.description)}" style="flex:2;min-width:200px">
         <input id="ec" value="${esc(r.part_code || '')}" placeholder="Código"
@@ -854,6 +862,26 @@ function panel(r){
         await api('/api/items/' + r.item_id, {method:'PATCH', body: JSON.stringify(body)});
         say('#emsg', true, 'Guardado.'); refresh();
       } catch (e) { say('#emsg', false, e.message); }
+    };
+    ed.querySelector('#qpgo').onclick = async () => {
+      const v = parseFloat(ed.querySelector('#qp').value);
+      if (isNaN(v) || v < 0) { say('#emsg', false, 'Escriba un precio válido.'); return; }
+      await save({price_usd: v});
+      const other = ed.querySelector('#ep');   // keep the full form in sync
+      if (other) other.value = v;
+    };
+    // Live "≈ Bs" preview so the user sees the boliviano price before saving.
+    const qpPreview = () => {
+      const v = parseFloat(ed.querySelector('#qp').value);
+      const el = ed.querySelector('#qpbs');
+      if (!el) return;
+      el.textContent = (!isNaN(v) && fx.rate)
+        ? '≈ Bs ' + (Math.round(v * fx.rate * 2) / 2).toFixed(2) : '';
+    };
+    ed.querySelector('#qp').oninput = qpPreview;
+    qpPreview();
+    ed.querySelector('#qp').onkeydown = e => {
+      if (e.key === 'Enter') ed.querySelector('#qpgo').click();
     };
     ed.querySelector('#ego').onclick = () => {
       // Only send fields that were actually filled in. An empty price field
@@ -1517,6 +1545,8 @@ async function loadSales(){
       <button data-nver="${q.quote_id}">Ver</button>
       <button data-npdf="${q.quote_id}">PDF</button>
       <button data-npng="${q.quote_id}">PNG</button>
+      ${(q.fulfillment_method === 'entrega' || q.fulfillment_method === 'envio')
+        ? `<button data-nlabel="${q.quote_id}">Etiqueta</button>` : ''}
       ${q.cancelled ? '' :
         `<button data-nedit="${q.quote_id}" data-num="${q.quote_number}">Editar</button>`}
       <button class="wa" data-nwa='${JSON.stringify(
@@ -1526,6 +1556,8 @@ async function loadSales(){
         `<button class="danger" data-cancel="${q.quote_id}"
           data-num="${q.quote_number}">Anular</button>`}
     </div></div>`).join('') : '<p class="empty">Aún no hay notas de venta.</p>';
+  box.querySelectorAll('[data-nlabel]').forEach(b => b.onclick = () =>
+    downloadDoc('/api/sales/' + b.dataset.nlabel + '/label', 'etiqueta.pdf'));
   box.querySelectorAll('[data-nver]').forEach(b => b.onclick = () =>
     showNotaDetail(+b.dataset.nver));
   box.querySelectorAll('[data-npdf]').forEach(b => b.onclick = () =>
@@ -1706,8 +1738,14 @@ async function openFulfillmentModal(){
       closeModal();
       const msg = $('#nmsg2');
       msg.className = 'msg good';
-      msg.textContent = `Nota Nº ${r.sale_number} creada y enviada a bodega. `
-        + `El stock se descontará al confirmarse.`;
+      msg.innerHTML = `Nota Nº ${r.sale_number} creada y enviada a bodega. `
+        + `El stock se descontará al confirmarse.`
+        + ((method === 'entrega' || method === 'envio')
+            ? ` <button id="nlabel-now" style="margin-left:8px">Imprimir etiqueta</button>`
+            : '');
+      const lb = document.getElementById('nlabel-now');
+      if (lb) lb.onclick = () =>
+        downloadDoc('/api/sales/' + r.sale_id + '/label', 'etiqueta.pdf');
       await sendWaSale({sale_id: r.sale_id, phone: $('#nph').value,
                         customer: $('#nn').value, number: r.sale_number});
       ncart = []; drawNCart();
