@@ -602,9 +602,15 @@ def download_sale_pdf(sale_id: int, request: Request):
 
 
 # ====================================================== shipping label (etiqueta)
+# Half-letter in landscape: 8.5" x 5.5". Two labels fit on one letter sheet with
+# a single horizontal cut, and the landscape shape suits a box face better than
+# a tall portrait page.
+LABEL_SIZE = (LETTER[0], LETTER[1] / 2)          # 612 x 396 pt
+
+
 def build_label(sale_id: int) -> bytes:
     """A printable label for the box: big destination, transport details and a
-    clear PAGADO / POR PAGAR mark. Only makes sense for entrega/envío - a store
+    clear PAGADO / POR PAGAR mark. Only makes sense for entrega/envio - a store
     pickup doesn't travel anywhere."""
     q = run("""SELECT quote_id, quote_number, customer, customer_phone
                FROM quote WHERE quote_id = %s""", (sale_id,))
@@ -626,122 +632,137 @@ def build_label(sale_id: int) -> bytes:
     shop = shop_info()
     lines_n = run("SELECT count(*) AS n FROM quote_line WHERE quote_id = %s",
                   (sale_id,))[0]["n"]
+    is_envio = f["method"] == "envio"
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=LETTER)
-    W, H = LETTER
-    M = 14 * mm
-    y = H - M
+    c = canvas.Canvas(buf, pagesize=LABEL_SIZE)
+    W, H = LABEL_SIZE
+    M = 9 * mm
 
-    # ---- outer border so the label can be cut out cleanly -----------------
-    c.setLineWidth(2)
-    c.rect(M - 4 * mm, M - 4 * mm, W - 2 * M + 8 * mm, H - 2 * M + 8 * mm)
+    # ---- cut border ------------------------------------------------------
+    c.setLineWidth(1.5)
+    c.rect(M - 3 * mm, M - 3 * mm, W - 2 * M + 6 * mm, H - 2 * M + 6 * mm)
 
-    # ---- header: who is sending -------------------------------------------
+    # ---- masthead: the logo stands in for the company name ---------------
+    top = H - M
     logo = Path("media/logo.png")
+    logo_drawn = False
     if logo.is_file():
         try:
-            c.drawImage(str(logo), M, y - 18 * mm, width=30 * mm, height=18 * mm,
-                        preserveAspectRatio=True, mask="auto")
+            c.drawImage(str(logo), M, top - 15 * mm,
+                        width=46 * mm, height=15 * mm,
+                        preserveAspectRatio=True, anchor="sw", mask="auto")
+            logo_drawn = True
         except Exception:
-            pass
-    c.setFont("Helvetica-Bold", 15)
-    c.drawRightString(W - M, y - 6 * mm, shop["name"])
-    c.setFont("Helvetica", 10)
-    if shop["phone"]:
-        c.drawRightString(W - M, y - 12 * mm, f"Tel: {shop['phone']}")
-    c.drawRightString(W - M, y - 17 * mm, f"Nota de venta Nº {q['quote_number']}")
+            logo_drawn = False
+    if not logo_drawn:                      # fallback if the file is missing
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(M, top - 11 * mm, shop["name"])
 
-    y -= 26 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawRightString(W - M, top - 6 * mm, f"Nota de venta Nº {q['quote_number']}")
+    c.setFont("Helvetica", 9)
+    c.setFillColor(colors.HexColor("#6B757C"))
+    if shop["phone"]:
+        c.drawRightString(W - M, top - 11 * mm, f"Remitente Tel: {shop['phone']}")
+    c.setFillColor(colors.black)
+
+    y = top - 19 * mm
     c.setLineWidth(1)
     c.line(M, y, W - M, y)
 
-    # ---- destination: the part that matters on a loading dock -------------
-    y -= 12 * mm
-    c.setFont("Helvetica", 11)
-    c.setFillColor(colors.HexColor("#6B757C"))
-    c.drawString(M, y, "DESTINATARIO")
+    # ---- two columns: destination on the left, transport on the right ----
+    col_gap = 6 * mm
+    left_w = (W - 2 * M) * 0.56
+    right_x = M + left_w + col_gap
+    right_w = W - M - right_x
+
+    grey = colors.HexColor("#6B757C")
+    ly = y - 8 * mm
+
+    c.setFont("Helvetica", 8.5)
+    c.setFillColor(grey)
+    c.drawString(M, ly, "DESTINATARIO")
     c.setFillColor(colors.black)
+    ly -= 8 * mm
+    c.setFont("Helvetica-Bold", 17)
+    c.drawString(M, ly, (f["recipient"] or q["customer"] or "-")[:26])
 
-    y -= 12 * mm
-    c.setFont("Helvetica-Bold", 24)
-    recipient = (f["recipient"] or q["customer"] or "-")[:38]
-    c.drawString(M, y, recipient)
-
-    y -= 16 * mm
-    c.setFont("Helvetica", 11)
-    c.setFillColor(colors.HexColor("#6B757C"))
-    c.drawString(M, y, "CIUDAD")
+    ly -= 10 * mm
+    c.setFont("Helvetica", 8.5)
+    c.setFillColor(grey)
+    c.drawString(M, ly, "CIUDAD")
     c.setFillColor(colors.black)
-    y -= 15 * mm
-    c.setFont("Helvetica-Bold", 34)          # biggest thing on the page
-    c.drawString(M, y, (f["city"] or "-").upper()[:22])
+    ly -= 11 * mm
+    c.setFont("Helvetica-Bold", 27)          # biggest thing on the label
+    c.drawString(M, ly, (f["city"] or "-").upper()[:16])
 
-    # ---- method-specific block --------------------------------------------
-    y -= 18 * mm
-    body = ParagraphStyle("lbl", fontName="Helvetica", fontSize=14, leading=18)
-
-    if f["method"] == "entrega":
-        c.setFont("Helvetica", 11)
-        c.setFillColor(colors.HexColor("#6B757C"))
-        c.drawString(M, y, "DIRECCIÓN DE ENTREGA")
-        c.setFillColor(colors.black)
-        y -= 4 * mm
-        p = Paragraph((f["address"] or "-"), body)
-        _, h = p.wrap(W - 2 * M, 40 * mm)
-        p.drawOn(c, M, y - h)
-        y -= h + 8 * mm
-        if f["dropoff_date"]:
-            c.setFont("Helvetica-Bold", 13)
-            c.drawString(M, y, f"Fecha de entrega: {f['dropoff_date']}")
-            y -= 10 * mm
-    else:  # envío por bus / avión
-        transporte = "AVIÓN" if (f["transport"] or "") == "avion" else "BUS"
-        c.setFont("Helvetica", 11)
-        c.setFillColor(colors.HexColor("#6B757C"))
-        c.drawString(M, y, "ENVÍO POR")
-        c.setFillColor(colors.black)
-        y -= 12 * mm
-        c.setFont("Helvetica-Bold", 22)
-        c.drawString(M, y, transporte)
-        y -= 14 * mm
-        c.setFont("Helvetica", 11)
-        c.setFillColor(colors.HexColor("#6B757C"))
-        c.drawString(M, y, "EMPRESA DE TRANSPORTE")
-        c.setFillColor(colors.black)
-        y -= 12 * mm
-        c.setFont("Helvetica-Bold", 20)
-        c.drawString(M, y, (f["company"] or "-")[:34])
-        y -= 14 * mm
-
-    # ---- phone -------------------------------------------------------------
     phone = q["customer_phone"] or ""
     if phone:
-        c.setFont("Helvetica", 13)
-        c.drawString(M, y, f"Teléfono: {phone}")
-        y -= 12 * mm
+        ly -= 9 * mm
+        c.setFont("Helvetica", 11)
+        c.drawString(M, ly, f"Tel: {phone}")
 
-    # ---- payment status: big, boxed, impossible to miss --------------------
-    if f["method"] == "envio":
+    # ---- right column ----------------------------------------------------
+    ry = y - 8 * mm
+    small = ParagraphStyle("sm", fontName="Helvetica", fontSize=10.5, leading=13)
+
+    if is_envio:
+        transporte = "AVIÓN" if (f["transport"] or "") == "avion" else "BUS"
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(grey)
+        c.drawString(right_x, ry, "ENVÍO POR")
+        c.setFillColor(colors.black)
+        ry -= 9 * mm
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(right_x, ry, transporte)
+
+        ry -= 11 * mm
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(grey)
+        c.drawString(right_x, ry, "EMPRESA DE TRANSPORTE")
+        c.setFillColor(colors.black)
+        ry -= 8 * mm
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(right_x, ry, (f["company"] or "-")[:24])
+    else:
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(grey)
+        c.drawString(right_x, ry, "DIRECCIÓN DE ENTREGA")
+        c.setFillColor(colors.black)
+        ry -= 5 * mm
+        p = Paragraph(f["address"] or "-", small)
+        _, h = p.wrap(right_w, 40 * mm)
+        p.drawOn(c, right_x, ry - h)
+        ry -= h + 7 * mm
+        if f["dropoff_date"]:
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(right_x, ry, f"Entregar: {f['dropoff_date']}")
+
+    # ---- payment status: full width, impossible to miss ------------------
+    if is_envio:
         pagado = (f["payment"] or "") == "pagado"
-        label = "PAGADO" if pagado else "POR PAGAR"
+        text = "PAGADO" if pagado else "POR PAGAR"
         tone = colors.HexColor("#0F6B3F") if pagado else colors.HexColor("#A8322A")
-        box_h = 20 * mm
-        box_y = max(M + 26 * mm, y - box_h)
+        box_h = 14 * mm
+        box_y = M + 8 * mm
         c.setStrokeColor(tone)
-        c.setLineWidth(3)
+        c.setLineWidth(2.5)
         c.rect(M, box_y, W - 2 * M, box_h, stroke=1, fill=0)
         c.setFillColor(tone)
-        c.setFont("Helvetica-Bold", 30)
-        c.drawCentredString(W / 2, box_y + 6 * mm, label)
+        c.setFont("Helvetica-Bold", 22)
+        c.drawCentredString(W / 2, box_y + 4.2 * mm, text)
         c.setFillColor(colors.black)
         c.setStrokeColor(colors.black)
+        foot_y = M + 2 * mm
+    else:
+        foot_y = M + 2 * mm
 
-    # ---- footer ------------------------------------------------------------
-    c.setFont("Helvetica", 10)
-    c.setFillColor(colors.HexColor("#6B757C"))
-    c.drawString(M, M + 8 * mm, f"{lines_n} producto(s) · Nota Nº {q['quote_number']}")
-    c.drawRightString(W - M, M + 8 * mm,
+    # ---- footer ----------------------------------------------------------
+    c.setFont("Helvetica", 8)
+    c.setFillColor(grey)
+    c.drawString(M, foot_y, f"{lines_n} producto(s)")
+    c.drawRightString(W - M, foot_y,
                       datetime.now().strftime("Emitido %Y-%m-%d %H:%M"))
 
     c.showPage()
