@@ -260,6 +260,7 @@ class Fulfillment(BaseModel):
     branch_id: int | None = None     # recojo
     recipient: str | None = None     # entrega / envio
     city: str | None = None
+    provincia: str | None = None     # optional, for countryside deliveries
     address: str | None = None       # entrega
     dropoff_date: str | None = None  # entrega
     transport: str | None = None     # envio: 'bus' | 'avion'
@@ -284,16 +285,19 @@ def save_fulfillment(quote_id: int, body: Fulfillment, request: Request):
             dd = None
 
     run("""INSERT INTO nota_fulfillment (quote_id, method, branch_id, recipient,
-                 city, address, dropoff_date, transport, company, payment)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 city, provincia, address, dropoff_date, transport, company,
+                 payment)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            ON CONFLICT (quote_id) DO UPDATE SET
              method=excluded.method, branch_id=excluded.branch_id,
              recipient=excluded.recipient, city=excluded.city,
+             provincia=excluded.provincia,
              address=excluded.address, dropoff_date=excluded.dropoff_date,
              transport=excluded.transport, company=excluded.company,
              payment=excluded.payment""",
         (quote_id, body.method, body.branch_id, body.recipient, body.city,
-         body.address, dd, body.transport, body.company, body.payment))
+         body.provincia, body.address, dd, body.transport, body.company,
+         body.payment))
 
     # Open a warehouse request if there isn't one yet.
     existing = run("SELECT bodega_id FROM bodega_request WHERE quote_id = %s",
@@ -312,7 +316,7 @@ def list_bodega(request: Request, status: str = "pendiente"):
         SELECT br.bodega_id, br.numero, br.status, br.created_at, br.created_by,
                br.resolved_at, br.resolved_by,
                q.quote_id, q.quote_number, q.customer, q.customer_phone,
-               f.method, f.city, f.address, f.recipient, f.transport,
+               f.method, f.city, f.provincia, f.address, f.recipient, f.transport,
                f.company, f.payment, f.dropoff_date,
                fb.name AS pickup_branch,
                (SELECT count(*) FROM quote_line ql WHERE ql.quote_id = q.quote_id) AS lineas

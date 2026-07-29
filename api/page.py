@@ -1204,6 +1204,17 @@ async function editDocumentIntoCart(quote_id, kind, number){
   }
 }
 
+// Opens WhatsApp only when the user explicitly asks for it. Nothing in the
+// app should call this on its own - unwanted WhatsApp tabs are a real
+// annoyance when the shop isn't using WhatsApp for that sale.
+function openWa(phone, msg){
+  const digits = (phone || '').replace(/[^0-9]/g,'');
+  const to = digits.length >= 11 ? digits : '';
+  const url = to ? `https://wa.me/${to}?text=${encodeURIComponent(msg)}`
+                 : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  window.open(url, '_blank');
+}
+
 async function sendWaQuote(d){
   // Fetch the PDF as a blob and force the correct filename. Doing it this
   // way instead of a plain <a href> stops Safari from silently appending
@@ -1258,11 +1269,16 @@ $('#cgo').onclick = async () => {
       valid_days: parseInt($('#cvd').value,10) || 15,
       lines: cart.map(c => ({item_id: c.item_id, qty: c.qty}))})});
     m.className = 'msg good';
-    m.textContent = `Cotización Nº ${r.quote_number} creada.`;
-    // Download the PDF, then open WhatsApp with the message.
-    sendWaQuote({quote_id: r.quote_id, phone: $('#cph').value,
-                 customer: $('#cn').value, number: r.quote_number,
-                 days: parseInt($('#cvd').value,10) || 3});
+    // The PDF always downloads. WhatsApp is a choice, not a surprise popup.
+    const waData = {quote_id: r.quote_id, phone: $('#cph').value,
+                    customer: $('#cn').value, number: r.quote_number,
+                    days: parseInt($('#cvd').value,10) || 3};
+    m.innerHTML = `Cotización Nº ${r.quote_number} creada. `
+      + `<button id="cwa-now" class="wa" style="margin-left:8px">Enviar por WhatsApp</button>`;
+    downloadQuotePdf(r.quote_id);
+    const cwa = document.getElementById('cwa-now');
+    if (cwa) cwa.onclick = () => openWa(waData.phone,
+        'Estimad@ cliente le adjunto su cotización.');
     // Reset for the next quote.
     cart = []; drawCart();
     $('#cn').value = $('#cni').value = '';
@@ -1677,6 +1693,7 @@ async function openFulfillmentModal(existingSaleId, existingNumber){
         Mismo nombre que la nota</label>
       <label class="sub">Ciudad</label>
       <select id="ful-e-city">${cityOpts}</select>
+      <input id="ful-e-prov" placeholder="Provincia (opcional, para el campo)">
       <input id="ful-e-address" placeholder="Dirección">
       <label class="sub">Fecha de entrega</label>
       <input id="ful-e-date" type="date">
@@ -1688,6 +1705,7 @@ async function openFulfillmentModal(existingSaleId, existingNumber){
         Mismo nombre que la nota</label>
       <label class="sub">Ciudad</label>
       <select id="ful-s-city">${cityOpts}</select>
+      <input id="ful-s-prov" placeholder="Provincia (opcional, para el campo)">
       <label class="sub">Transporte</label>
       <select id="ful-s-transport"><option value="bus">Bus</option>
         <option value="avion">Avión</option></select>
@@ -1737,12 +1755,14 @@ async function openFulfillmentModal(existingSaleId, existingNumber){
       const same = modal.querySelector('#ful-samename').checked;
       ful.recipient = same ? $('#nn').value : modal.querySelector('#ful-e-name').value;
       ful.city = modal.querySelector('#ful-e-city').value;
+      ful.provincia = modal.querySelector('#ful-e-prov').value.trim() || null;
       ful.address = modal.querySelector('#ful-e-address').value;
       ful.dropoff_date = modal.querySelector('#ful-e-date').value || null;
     } else {
       const same = modal.querySelector('#ful-s-samename').checked;
       ful.recipient = same ? $('#nn').value : modal.querySelector('#ful-s-name').value;
       ful.city = modal.querySelector('#ful-s-city').value;
+      ful.provincia = modal.querySelector('#ful-s-prov').value.trim() || null;
       ful.transport = modal.querySelector('#ful-s-transport').value;
       ful.company = modal.querySelector('#ful-s-company').value;
       ful.payment = modal.querySelector('#ful-s-payment').value;
@@ -1787,13 +1807,18 @@ async function openFulfillmentModal(existingSaleId, existingNumber){
             + `El stock se descontará al confirmarse.`)
         + ((method === 'entrega' || method === 'envio')
             ? ` <button id="nlabel-now" style="margin-left:8px">Imprimir etiqueta</button>`
-            : '');
+            : '')
+        + ` <button id="nwa-now" class="wa" style="margin-left:6px">Enviar por WhatsApp</button>`;
       const lb = document.getElementById('nlabel-now');
       if (lb) lb.onclick = () =>
         downloadDoc('/api/sales/' + r.sale_id + '/label', 'etiqueta.pdf');
+      const nwa = document.getElementById('nwa-now');
+      const waPhone = $('#nph').value;
+      if (nwa) nwa.onclick = () =>
+        openWa(waPhone, 'Estimad@ cliente le adjunto su nota de venta.');
       if (!existingSaleId) {
-        await sendWaSale({sale_id: r.sale_id, phone: $('#nph').value,
-                          customer: $('#nn').value, number: r.sale_number});
+        // PDF downloads automatically; WhatsApp only if the user asks.
+        downloadSalePdf(r.sale_id);
       }
       if (!existingSaleId) {
         ncart = []; drawNCart();
@@ -1871,11 +1896,15 @@ function bodegaHtml(d){
   if (f.method === 'recojo') entrega = `Recojo en tienda: <b>${esc(f.pickup_branch||'—')}</b>`;
   else if (f.method === 'entrega') entrega =
     `Entrega a domicilio<br>Recibe: ${esc(f.recipient||'—')}<br>`
-    + `Ciudad: ${esc(f.city||'—')}<br>Dirección: ${esc(f.address||'—')}<br>`
+    + `Ciudad: ${esc(f.city||'—')}`
+    + (f.provincia ? ` · Provincia: ${esc(f.provincia)}` : '')
+    + `<br>Dirección: ${esc(f.address||'—')}<br>`
     + `Fecha: ${esc((f.dropoff_date||'').slice(0,10)||'—')}`;
   else if (f.method === 'envio') entrega =
     `Envío por ${esc(f.transport||'—')}<br>Recibe: ${esc(f.recipient||'—')}<br>`
-    + `Ciudad: ${esc(f.city||'—')}<br>Empresa: ${esc(f.company||'—')}<br>`
+    + `Ciudad: ${esc(f.city||'—')}`
+    + (f.provincia ? ` · Provincia: ${esc(f.provincia)}` : '')
+    + `<br>Empresa: ${esc(f.company||'—')}<br>`
     + `Pago: ${f.payment === 'pagado' ? 'Pagado' : 'Por pagar'}`;
   const rows = d.lines.map(ln => `<tr>
     <td>${esc(ln.part_code||'—')}</td><td>${esc(ln.brand||'--')}</td>
