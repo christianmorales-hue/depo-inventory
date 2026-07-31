@@ -69,9 +69,13 @@ def current_rate():
     rate = float(row["venta"]) if row and row["venta"] else None
     return {"source": source, "rate": rate,
             "fetched_at": row["fetched_at"].isoformat() if row else None,
+            "api_updated": (row["api_updated"] if row else None),
             "all": {k: {"compra": float(v["compra"]) if v["compra"] else None,
                         "venta": float(v["venta"]) if v["venta"] else None,
-                        "casa": v["casa"]}
+                        "casa": v["casa"],
+                        "fetched_at": v["fetched_at"].isoformat()
+                                      if v["fetched_at"] else None,
+                        "api_updated": v["api_updated"]}
                     for k, v in rows.items()}}
 
 

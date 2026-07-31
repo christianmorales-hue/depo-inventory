@@ -173,6 +173,13 @@ PAGE = r"""
         border:1px solid color-mix(in srgb, var(--focus) 35%, var(--line));
         border-radius:9px;padding:9px 11px;margin-bottom:10px;align-items:center}
  .quickprice b{font-size:13px}
+ .fxwhen{font-size:11px;padding:2px 7px;border-radius:20px;margin-left:4px;
+        white-space:nowrap;cursor:help}
+ .fxwhen.fxok{color:var(--muted);background:color-mix(in srgb, var(--muted) 12%, transparent)}
+ .fxwhen.fxwarn{color:var(--amber);background:color-mix(in srgb, var(--amber) 15%, transparent);
+        border:1px solid color-mix(in srgb, var(--amber) 40%, transparent)}
+ .fxwhen.fxold{color:var(--warn);background:color-mix(in srgb, var(--warn) 15%, transparent);
+        border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-weight:600}
  .bstate{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;
         letter-spacing:.02em;white-space:nowrap}
  .bstate.on{background:color-mix(in srgb, var(--have) 15%, transparent);
@@ -589,15 +596,59 @@ function go(v){
   if (v === 'admin')     drawAdmin();
 }
 
+// "hace 5 min" / "hace 3 h" / "hace 2 días" - so staleness is readable at a
+// glance instead of forcing anyone to decode a timestamp.
+function agoText(iso){
+  if (!iso) return 'nunca';
+  const then = new Date(iso), mins = Math.floor((Date.now() - then) / 60000);
+  if (isNaN(mins)) return 'desconocido';
+  if (mins < 1)  return 'hace segundos';
+  if (mins < 60) return `hace ${mins} min`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  return `hace ${d} día${d > 1 ? 's' : ''}`;
+}
+
 function drawFx(){
   const el = $('#fxbox'); if (!el) return;
   if (!fx.rate) { el.textContent = 'sin tipo de cambio'; return; }
   const label = fx.source === 'blue' ? 'paralelo' : 'oficial';
-  el.innerHTML = `TC ${label}: <b>${fx.rate}</b> Bs/USD`;
+
+  // How stale is the number we are showing? The cache refreshes hourly, so
+  // anything much older than that means the fetches are failing silently.
+  const mins = fx.fetched_at
+    ? Math.floor((Date.now() - new Date(fx.fetched_at)) / 60000) : null;
+  const cls = mins === null ? 'fxold'
+            : mins > 1440 ? 'fxold'
+            : mins > 90   ? 'fxwarn' : 'fxok';
+  const tip = `Consultado a la API: ${fx.fetched_at || 'nunca'}`
+            + (fx.api_updated ? `\nLa API publicó este valor: ${fx.api_updated}` : '');
+
+  el.innerHTML = `TC ${label}: <b>${fx.rate}</b> Bs/USD`
+    + ` <span class="fxwhen ${cls}" title="${esc(tip)}">`
+    + `actualizado ${agoText(fx.fetched_at)}</span>`;
+
   if (user.role === 'admin') {
-    el.innerHTML += ` <button class="link" id="fxsw">cambiar</button>`;
-    setTimeout(() => { const b = $('#fxsw'); if (b) b.onclick = switchFx; }, 0);
+    el.innerHTML += ` <button class="link" id="fxsw">cambiar</button>`
+                  + ` <button class="link" id="fxup">actualizar</button>`;
+    setTimeout(() => {
+      const b = $('#fxsw'); if (b) b.onclick = switchFx;
+      const u = $('#fxup'); if (u) u.onclick = forceFx;
+    }, 0);
   }
+}
+
+// Ask the server to re-query the API right now, bypassing the hourly cache.
+async function forceFx(){
+  const el = $('#fxbox');
+  const before = fx.rate;
+  el.innerHTML = 'consultando…';
+  try {
+    fx = await api('/api/fx/refresh', {method:'POST'});
+    drawFx();
+    if (fx.rate !== before) refresh();      // prices changed, redraw them
+  } catch (e) { drawFx(); alert('No se pudo actualizar: ' + e.message); }
 }
 async function switchFx(){
   const next = fx.source === 'oficial' ? 'blue' : 'oficial';
