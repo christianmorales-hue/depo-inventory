@@ -173,7 +173,24 @@ PAGE = r"""
         border:1px solid color-mix(in srgb, var(--focus) 35%, var(--line));
         border-radius:9px;padding:9px 11px;margin-bottom:10px;align-items:center}
  .quickprice b{font-size:13px}
+ .bstate{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;
+        letter-spacing:.02em;white-space:nowrap}
+ .bstate.on{background:color-mix(in srgb, var(--have) 15%, transparent);
+        color:var(--have);border:1px solid color-mix(in srgb, var(--have) 40%, transparent)}
+ .bstate.off{background:color-mix(in srgb, var(--muted) 15%, transparent);
+        color:var(--muted);border:1px solid var(--line)}
  .ful-tabs{display:flex;gap:6px;margin:12px 0}
+ .import-box{margin-top:16px;padding:12px;border:1px dashed var(--line);
+        border-radius:9px;background:color-mix(in srgb, var(--focus) 4%, var(--card))}
+ .btn-file{display:inline-block;padding:9px 14px;border:1px solid var(--focus);
+        border-radius:8px;background:var(--card);color:var(--focus);
+        cursor:pointer;font-size:14px}
+ .btn-file:hover{background:color-mix(in srgb, var(--focus) 10%, var(--card))}
+ .imp-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+ .imp-table th{text-align:left;padding:5px 6px;border-bottom:2px solid var(--line);
+        color:var(--muted);font-size:11px;text-transform:uppercase}
+ .imp-table td{padding:3px 6px;border-bottom:1px solid var(--line)}
+ .imp-table input[type=text],.imp-table input:not([type]){width:100%}
  .ful-tab{flex:1;padding:10px;border:1px solid var(--line);border-radius:8px;
         background:var(--card);color:var(--muted);cursor:pointer;font-size:13px}
  .ful-tab.on{background:var(--focus);color:#fff;border-color:var(--focus)}
@@ -2286,6 +2303,18 @@ function drawAdmin(){
     </div>
     <div id="ndupe" class="dupe-warn" hidden></div>
     <div class="msg" id="nmsg"></div>
+
+    <div class="import-box">
+      <b>Importar varios productos</b>
+      <p class="hint">Desde un archivo CSV (columnas: código, descripción, marca,
+        precio). Se ignoran las demás columnas. Siempre revise antes de guardar.</p>
+      <div class="bar">
+        <label class="btn-file">Elegir CSV
+          <input id="imp-csv" type="file" accept=".csv,text/csv" hidden></label>
+        <span class="sub" id="imp-msg"></span>
+      </div>
+      <div id="imp-review" hidden></div>
+    </div>
   </details>
   <details open><summary>Sucursales</summary>
     <div id="blist"></div>
@@ -2332,6 +2361,34 @@ function drawAdmin(){
     } catch (e) { m.className = 'msg bad'; m.textContent = e.message; }
   };
 
+  // ---- CSV import: upload -> parse -> editable review -> bulk insert ----
+  const impCsv = document.getElementById('imp-csv');
+  if (impCsv) impCsv.onchange = async () => {
+    const file = impCsv.files[0];
+    if (!file) return;
+    const im = $('#imp-msg');
+    im.className = 'sub'; im.textContent = 'Leyendo…';
+    let data;
+    try {
+      const res = await fetch('/api/items/parse-csv',
+                              {method:'POST', body: await file.arrayBuffer()});
+      if (!res.ok) throw new Error((await res.json()).detail || 'Error');
+      data = await res.json();
+    } catch (e) { im.className = 'msg bad'; im.textContent = e.message; return; }
+    impCsv.value = '';                       // allow re-choosing the same file
+    if (!data.rows.length) {
+      im.className = 'msg bad';
+      im.textContent = 'No se encontraron productos válidos en el archivo.';
+      return;
+    }
+    const cols = Object.entries(data.columns)
+      .map(([k, v]) => `${k}="${esc(v)}"`).join(', ');
+    im.className = 'sub';
+    im.textContent = `${data.found} producto(s) leídos. Columnas: ${cols}. `
+      + `Revise y corrija antes de guardar.`;
+    renderImportReview(data.rows);
+  };
+
   renderBranches();
   $('#bgo').onclick = async () => {
     const m = $('#bmsg');
@@ -2344,6 +2401,68 @@ function drawAdmin(){
   };
 }
 
+// The imported rows are shown here as an editable table. Nothing is saved
+// until the user reviews, fixes any OCR/CSV slips, and clicks Guardar.
+let importRows = [];
+function renderImportReview(rows){
+  importRows = rows.map(r => ({...r}));
+  const box = document.getElementById('imp-review');
+  box.hidden = false;
+  const body = importRows.map((r, i) => `
+    <tr data-i="${i}">
+      <td><input type="checkbox" class="imp-ok" checked></td>
+      <td><input class="imp-c" value="${esc(r.part_code||'')}" style="width:110px"></td>
+      <td><input class="imp-d" value="${esc(r.description||'')}" style="width:100%;min-width:200px"></td>
+      <td><input class="imp-m" value="${esc(r.make||'')}" style="width:90px"></td>
+      <td><input class="imp-p" type="number" step="0.01"
+             value="${r.price_usd ?? ''}" style="width:90px"></td>
+    </tr>`).join('');
+  box.innerHTML = `
+    <table class="imp-table">
+      <thead><tr><th>✓</th><th>Código</th><th>Descripción</th>
+        <th>Marca</th><th>Precio USD</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    <div class="bar" style="margin-top:10px">
+      <button class="primary" id="imp-save">Guardar seleccionados</button>
+      <button id="imp-cancel">Cancelar</button>
+      <span class="msg" id="imp-save-msg"></span>
+    </div>`;
+
+  box.querySelector('#imp-cancel').onclick = () => {
+    box.hidden = true; box.innerHTML = ''; importRows = [];
+    $('#imp-msg').textContent = '';
+  };
+  box.querySelector('#imp-save').onclick = async () => {
+    const sm = box.querySelector('#imp-save-msg');
+    const chosen = [];
+    box.querySelectorAll('tbody tr').forEach(tr => {
+      if (!tr.querySelector('.imp-ok').checked) return;
+      const desc = tr.querySelector('.imp-d').value.trim();
+      if (desc.length < 3) return;
+      const price = parseFloat(tr.querySelector('.imp-p').value);
+      chosen.push({
+        part_code: tr.querySelector('.imp-c').value.trim() || null,
+        description: desc,
+        make: tr.querySelector('.imp-m').value.trim() || null,
+        price_usd: isNaN(price) ? null : price,
+      });
+    });
+    if (!chosen.length) { sm.className = 'msg bad'; sm.textContent = 'No hay filas seleccionadas.'; return; }
+    sm.className = 'sub'; sm.textContent = `Guardando ${chosen.length}…`;
+    try {
+      const r = await api('/api/items/bulk',
+                          {method:'POST', body: JSON.stringify({rows: chosen})});
+      sm.className = 'msg good';
+      sm.textContent = `${r.created} producto(s) creados`
+        + (r.skipped.length ? `, ${r.skipped.length} omitidos.` : '.');
+      box.hidden = true; box.innerHTML = ''; importRows = [];
+      $('#imp-msg').textContent = '';
+      search();
+    } catch (e) { sm.className = 'msg bad'; sm.textContent = e.message; }
+  };
+}
+
 async function renderBranches(){
   const all = await api('/api/branches');
   const box = $('#blist'); if (!box) return;
@@ -2351,9 +2470,15 @@ async function renderBranches(){
     <div class="bar" style="margin-bottom:8px">
       <input value="${esc(b.name)}" data-id="${b.branch_id}" class="bname"
              style="flex:1;min-width:180px">
+      <span class="bstate ${b.is_active ? 'on' : 'off'}">${
+        b.is_active ? 'Activa' : 'Inactiva'}</span>
       <button class="bsave" data-id="${b.branch_id}">Renombrar</button>
-      <button class="danger btog" data-id="${b.branch_id}" data-on="${b.is_active}">
-        ${b.is_active ? 'Desactivar' : 'Reactivar'}</button>
+      <button class="${b.is_active ? 'danger' : 'primary'} btog"
+              data-id="${b.branch_id}" data-on="${b.is_active}"
+              title="${b.is_active
+                ? 'Ocultarla de todos los desplegables de sucursal'
+                : 'Volver a mostrarla en los desplegables'}">${
+        b.is_active ? 'Desactivar' : 'Reactivar'}</button>
     </div>`).join('');
   const patch = async (id, body) => {
     try {
